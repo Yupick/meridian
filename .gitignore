@@ -1,0 +1,14 @@
+# Artefactos de construcción
+/target/
+/build/
+/out/
+*.img
+*.iso
+*.fd
+*.vars.fd
+
+# Editores y sistema
+.vscode/
+.idea/
+*.swp
+.DS_Store
