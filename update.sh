@@ -5,6 +5,7 @@
 #   --pull         Actualizar el repo local desde origin (fast-forward).
 #   --push         Subir la rama actual a origin.
 #   --commit       Crear un commit con los cambios locales.
+#   --pr           Abrir un Pull Request de la rama actual hacia main (requiere gh).
 #   -m "texto"     Mensaje del commit (con --commit).
 #   -y             No preguntar confirmaciones (uso no interactivo).
 #   -h, --help     Mostrar ayuda.
@@ -151,6 +152,50 @@ show_state() {
     git status -sb | head -1 | sed 's/^/  /'
 }
 
+do_pr() {
+    local b; b="$(current_branch)"
+    [[ "$b" == "$PROTECTED_BRANCH" ]] && fail "el PR se abre desde develop o feature/*, no desde '$PROTECTED_BRANCH'"
+    command -v gh >/dev/null 2>&1 || fail "necesitas GitHub CLI (gh) para crear PR"
+    gh auth status >/dev/null 2>&1 || fail "gh no está autenticado; ejecuta: gh auth login"
+
+    fetch_remote
+    local remote_sha
+    remote_sha="$(git rev-parse "refs/remotes/$REMOTE/$b" 2>/dev/null || echo none)"
+    if [[ "$remote_sha" != "$(git rev-parse HEAD)" ]]; then
+        log "la rama '$b' tiene cambios sin subir; subiéndolos antes del PR"
+        do_push
+    fi
+
+    if git rev-list --count "$REMOTE/$PROTECTED_BRANCH..$b" 2>/dev/null | grep -qx 0; then
+        log "no hay commits de '$b' que no estén en '$PROTECTED_BRANCH'; no se abre PR"
+        return 0
+    fi
+
+    local existing
+    existing="$(gh pr list --head "$b" --base "$PROTECTED_BRANCH" --state open --json url --jq '.[0].url' 2>/dev/null || true)"
+    if [[ -n "$existing" ]]; then
+        log "ya existe un PR abierto: $existing"
+        return 0
+    fi
+
+    local title body
+    if [[ -n "${PR_TITLE:-}" ]]; then
+        title="$PR_TITLE"
+    else
+        [[ "${ASSUME_YES:-0}" == 1 ]] && fail "falta el título del PR (-t \"texto\")"
+        read -r -p "Título del PR: " title
+    fi
+    [[ -n "$title" ]] || fail "el título del PR no puede estar vacío"
+    body="Commits incluidos:
+
+$(git log --oneline "$REMOTE/$PROTECTED_BRANCH..$b" | sed 's/^/- /')"
+
+    ask "¿Abrir PR de '$b' hacia '$PROTECTED_BRANCH' con el título \"$title\"?" || { log "PR cancelado"; return 0; }
+    local url
+    url="$(gh pr create --base "$PROTECTED_BRANCH" --head "$b" --title "$title" --body "$body")"
+    log "PR creado: $url"
+}
+
 menu() {
     while true; do
         echo
@@ -160,7 +205,8 @@ menu() {
         echo "  3) Crear commit de cambios locales"
         echo "  4) Commit y subir (3 + 2)"
         echo "  5) Ver estado"
-        echo "  6) Salir"
+        echo "  6) Abrir PR hacia main (gh)"
+        echo "  7) Salir"
         read -r -p "Opción: " opt
         case "$opt" in
             1) do_pull ;;
@@ -168,19 +214,22 @@ menu() {
             3) do_commit ;;
             4) do_commit && do_push ;;
             5) show_state ;;
-            6|q|"") exit 0 ;;
+            6) do_pr ;;
+            7|q|"") exit 0 ;;
             *) warn "opción no válida" ;;
         esac
     done
 }
 
 # ---- Parseo de argumentos ----
-DO_PULL=0; DO_PUSH=0; DO_COMMIT=0; ASSUME_YES=0; MESSAGE=""
+DO_PULL=0; DO_PUSH=0; DO_COMMIT=0; DO_PR=0; ASSUME_YES=0; MESSAGE=""; PR_TITLE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --pull) DO_PULL=1 ;;
         --push) DO_PUSH=1 ;;
         --commit) DO_COMMIT=1 ;;
+        --pr) DO_PR=1 ;;
+        -t) shift; PR_TITLE="${1:-}"; [[ -n "$PR_TITLE" ]] || fail "-t requiere un texto" ;;
         -m) shift; MESSAGE="${1:-}"; [[ -n "$MESSAGE" ]] || fail "-m requiere un texto" ;;
         -y) ASSUME_YES=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -191,7 +240,7 @@ done
 
 check_repo
 
-if (( DO_PULL + DO_PUSH + DO_COMMIT == 0 )); then
+if (( DO_PULL + DO_PUSH + DO_COMMIT + DO_PR == 0 )); then
     menu
     exit 0
 fi
@@ -200,4 +249,5 @@ fi
 (( DO_PULL ))   && do_pull
 (( DO_COMMIT )) && do_commit
 (( DO_PUSH ))   && do_push
+(( DO_PR ))     && do_pr
 show_state
