@@ -12,3 +12,9 @@
 .idea/
 *.swp
 .DS_Store
+
+# Espacio de trabajo local (no se versiona)
+# tmp/: archivos temporales y generados durante el trabajo
+# env/: nombres de sesiones de OpenCode para retomarlas
+tmp/
+env/
