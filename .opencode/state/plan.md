@@ -123,3 +123,68 @@ Estados permitidos: `pending`, `in_progress`, `completed`, `cancelled`.
 | R4 | Documentación limitada de GPU | Medio | Usar framebuffer UEFI y virtio-gpu en desarrollo; GPU real en fase posterior |
 | R5 | Cambios de versión de paquetes en Ubuntu | Bajo | Fijar versiones de Rust con `rust-toolchain.toml` |
 | R6 | Licencia AGPL limita adopción por algunas empresas | Medio | Documentar opciones de licencia comercial con el titular del copyright antes de recibir contribuciones externas |
+
+---
+
+## Fases del proyecto
+
+Orden decidido: beta de servidor antes que escritorio; ARM64 después del escritorio;
+compiladores nativos después del escritorio; multi-SO en la fase 7.
+Solo una tarea está `in_progress` a la vez. Las tareas de la fase 0 (T0.1 a T0.9) son las
+que se ejecutan ahora; el resto está en `pending` y se activa al cerrar la fase anterior.
+
+| Fase | Objetivo | Criterio de salida |
+|---|---|---|
+| **0. Inicio** | Kernel que arranca en QEMU con terminal de texto | Shell funcional en QEMU (T0.1 a T0.9) |
+| **1. Base del sistema** | Cargador UEFI propio, servicio de bloques, sistema de objetos en disco, cifrado de volumen | Volumen cifrado que persiste tras reinicio |
+| **2. Red y servicios de servidor** | Pila de red (IPv4/IPv6, TCP/UDP), usuarios y autenticación, acceso remoto cifrado | Inicio de sesión remoto cifrado desde otra máquina |
+| **3. Beta de servidor** | Estabilización, pruebas de carga, documentación de usuario, imagen instalable | Imagen instalable publicada y probada en QEMU |
+| **4. Escritorio y gráficos** | Compositor, ventanas, framebuffer GOP y luego driver de GPU en espacio de usuario | Escritorio usable en QEMU |
+| **5. ARM64** | HAL y arranque para aarch64 | Arranque de Meridian en QEMU aarch64 |
+| **6. Compiladores y runtimes nativos** | Port de Clang/LLVM (C/C++), rustc, runtime de Java | Compilar y ejecutar un programa en cada lenguaje dentro de Meridian |
+| **7. Multi-SO y hardware real** | Cargador multi-SO y soporte de placas concretas | Meridian arranca junto a otro SO en hardware real |
+| **8. Producto** | Auditoría criptográfica externa, documentación de soporte, servicios comerciales | Informe de auditoría publicado sin hallazgos críticos abiertos |
+
+### Fase 1 — Base del sistema (pending)
+
+- **T1.1 — Cargador UEFI propio** — pending, prioridad alta, Backend. Cargar kernel y pasar mapa de memoria; firma del kernel con Ed25519 (criterio: arranque rechaza kernel con firma inválida).
+- **T1.2 — Servicio de bloques** — pending, prioridad alta, Backend. Driver virtio-blk en espacio de usuario (criterio: lectura y escritura de sectores en QEMU).
+- **T1.3 — Sistema de objetos en disco** — pending, prioridad alta, Db + Backend. B+ trees para índices, extents para datos, copy-on-write y checksums (criterio: datos íntegros tras corte de energía simulado).
+- **T1.4 — Cifrado de volumen** — pending, prioridad alta, Backend + Db. AES-256-XTS y Argon2id propios, validados con vectores NIST/RFC (criterio: vectores oficiales pasan; volumen ilegible sin clave).
+
+### Fase 2 — Red y servicios de servidor (pending)
+
+- **T2.1 — Pila de red** — pending, prioridad alta, Backend. Ethernet, ARP, IPv4/IPv6, TCP y UDP con driver virtio-net (criterio: ping y conexión TCP desde host).
+- **T2.2 — Usuarios y autenticación** — pending, prioridad alta, Backend. Cuentas, grupos y contraseñas con Argon2id (criterio: login correcto e incorrecto en la terminal).
+- **T2.3 — Acceso remoto cifrado** — pending, prioridad alta, Backend + QA. Protocolo propio sobre TLS 1.3 implementado desde cero (criterio: sesión remota cifrada verificada con capturas de tráfico).
+
+### Fase 3 — Beta de servidor (pending)
+
+- **T3.1 — Estabilización y pruebas de carga** — pending, prioridad alta, QA.
+- **T3.2 — Documentación de usuario e instalación** — pending, prioridad media, Docs.
+- **T3.3 — Imagen instalable** — pending, prioridad alta, Backend. Criterio: imagen probada en QEMU desde cero.
+
+### Fase 4 — Escritorio y gráficos (pending)
+
+- **T4.1 — Compositor y ventanas** — pending, prioridad alta, Frontend.
+- **T4.2 — Driver de GPU en espacio de usuario** — pending, prioridad media, Backend. Criterio: un fallo del driver no tumba el kernel.
+
+### Fase 5 — ARM64 (pending)
+
+- **T5.1 — HAL para aarch64** — pending, prioridad alta, Backend. Criterio: arranque en QEMU aarch64.
+
+### Fase 6 — Compiladores y runtimes nativos (pending)
+
+- **T6.1 — Port de Clang/LLVM (C/C++)** — pending, prioridad alta, Backend.
+- **T6.2 — Port de rustc y libstd** — pending, prioridad alta, Backend.
+- **T6.3 — Runtime de Java** — pending, prioridad media, Backend. JVM escrita desde la especificación pública, no desde OpenJDK.
+
+### Fase 7 — Multi-SO y hardware real (pending)
+
+- **T7.1 — Cargador multi-SO** — pending, prioridad media, Backend.
+- **T7.2 — Soporte de una placa de referencia x86-64** — pending, prioridad media, Backend.
+
+### Fase 8 — Producto (pending)
+
+- **T8.1 — Auditoría criptográfica externa** — pending, prioridad alta, QA + usuario.
+- **T8.2 — Documentación de soporte y licenciamiento de servicios** — pending, prioridad media, Docs.
