@@ -53,6 +53,21 @@ Reglas para el orquestador:
 8. No se suben archivos sensibles (claves, `auth.json`, `llA.txt`, `.env`). `update.sh` los filtra,
    pero el agente debe revisarlos también.
 
+Política de ramas (obligatoria para el orquestador y todos los agentes):
+- El orquestador NUNCA modifica `main`. Todo cambio va en una rama `feature/*` o `fix/*`,
+  o directamente en `develop` solo para cambios de documentación del plan.
+- Un cambio llega a `main` únicamente por PR desde `develop` (o desde `release/*`/`hotfix/*`),
+  confirmado por el usuario.
+- Limpieza de ramas: la rama de una tarea se borra en cuanto su PR está fusionado en `develop`
+  (local y en `origin`). No se acumulan ramas ya integradas.
+- Auditoría periódica: al inicio de cada sesión y al cerrar cada fase, el orquestador lista las
+  ramas y comprueba cuáles están totalmente fusionadas en `develop` (`git branch --merged develop`)
+  y cuáles tienen PR cerrado. Las ramas integradas que sigan existentes se reportan al usuario
+  para borrarlas. Las ramas sin fusionar nunca se borran sin confirmación.
+- Ramas que se conservan hasta el cierre de versión: `main`, `develop`, y las `release/*` de
+  release candidates hasta que se publique la versión final y su tag.
+- Nunca se borran ramas remotas de otros colaboradores ni ramas con trabajo sin subir.
+
 Paralelismo: las tareas sin dependencias pendientes (por ejemplo T1.4 criptografía base mientras
 se trabaja en A-fase) pueden ejecutarse a la vez, cada una en su rama y en su propio agente.
 Para evitar mezclar cambios en el mismo directorio de trabajo, cada agente usa un `git worktree`
