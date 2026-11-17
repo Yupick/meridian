@@ -11,8 +11,7 @@ criptografía propia validada y soporte multiarquitectura (x86-64, luego ARM64).
 - Desarrollo en Ubuntu 24.04.5 LTS. Los paquetes (QEMU, OVMF, Rust) se instalan en el equipo de
   desarrollo, que es distinto del equipo de planificación. Las tareas de entorno se marcan como
   "en el equipo de desarrollo".
-- Flujo Git: trabajo en `develop` o en ramas `feature/*`; `main` se actualiza desde `develop`.
-  Commits y sincronización con `update.sh`.
+- Flujo Git: GitFlow (ver sección Flujo de trabajo). Commits, PR y sincronización con `update.sh`.
 - Decisiones cerradas: microkernel; Rust no_std; capacidades simples; UEFI en la beta;
   criptografía propia con vectores oficiales y auditoría antes de producción.
 - Pendiente: nombre definitivo del SO.
@@ -20,10 +19,44 @@ criptografía propia validada y soporte multiarquitectura (x86-64, luego ARM64).
 
 ## Estados y reglas
 - Estados: `pending`, `in_progress`, `completed`, `cancelled`.
-- Solo UNA tarea `in_progress` a la vez.
-- `completed-at` solo cuando el estado es `completed`.
 - Una tarea solo pasa a `in_progress` si todas sus dependencias están `completed`.
+- Varias tareas pueden estar `in_progress` A LA VEZ, solo si: (a) no dependen entre sí,
+  (b) tocan archivos o directorios distintos, y (c) cada una tiene su propia rama y su propio agente.
+- Una tarea pasa a `completed` solo cuando sus criterios de aceptación se verifican
+  (QA lo confirma) y su PR está fusionado en `develop`.
+- `completed-at` solo cuando el estado es `completed`; se escribe la fecha de fusión del PR.
 - Cada tarea se verifica con sus criterios de aceptación antes de marcarse `completed`.
+
+## Flujo de trabajo (GitFlow)
+
+Ramas:
+- `main`: solo versiones publicadas. Se actualiza desde `develop` (o `release/*` / `hotfix/*`) mediante PR.
+- `develop`: integración. Todas las tareas terminan aquí.
+- `feature/<ID>-<nombre-corto>`: una rama por tarea. Ejemplo: `feature/A6-ipc-capacidades`.
+- `fix/<ID>-<nombre>`: corrección de una tarea ya completada.
+- `release/<version>` y `hotfix/<version>`: se definen cuando exista una beta (fase 3).
+
+Reglas para el orquestador:
+1. Antes de empezar una tarea, crear su rama desde `develop` actualizado:
+   `git checkout develop && ./update.sh --pull && git checkout -b feature/<ID>-<nombre>`.
+2. Commits solo en la rama de la tarea. Nunca commits directos en `main` ni en `develop`.
+3. Al terminar y pasar los criterios de aceptación: `./update.sh --commit --push -m "..."` y
+   `./update.sh --pr -t "<ID>: <título>"`. El PR apunta a `develop`.
+4. Fusionar un PR en `develop` solo cuando QA haya verificado los criterios. La fusión la confirma
+   el usuario (`./update.sh --merge-pr N` o botón de GitHub). Los agentes no fusionan por su cuenta.
+5. Tras cada fusión: `develop` se actualiza localmente con `./update.sh --pull`, y las ramas
+   de tareas que dependan de ella se rebasan o se reabren desde `develop` actualizado.
+6. Cuando una fase cierra (todas sus tareas `completed`), se abre PR `develop -> main` y se
+   etiqueta la versión.
+7. Conflictos: no se fuerza nada (sin `push --force`, sin reescribir historial). Si dos tareas
+   en paralelo tocan el mismo archivo, la segunda espera a que se fusione la primera.
+8. No se suben archivos sensibles (claves, `auth.json`, `llA.txt`, `.env`). `update.sh` los filtra,
+   pero el agente debe revisarlos también.
+
+Paralelismo: las tareas sin dependencias pendientes (por ejemplo T1.4 criptografía base mientras
+se trabaja en A-fase) pueden ejecutarse a la vez, cada una en su rama y en su propio agente.
+Para evitar mezclar cambios en el mismo directorio de trabajo, cada agente usa un `git worktree`
+separado: `git worktree add ../meridian-<ID> feature/<ID>-<nombre>`.
 
 ## Fases del proyecto
 

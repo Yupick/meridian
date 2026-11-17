@@ -156,9 +156,18 @@ show_state() {
     git status -sb | head -1 | sed 's/^/  /'
 }
 
+pr_base_for() {  # develop -> main ; feature/* -> develop ; release/* -> main
+    case "$1" in
+        develop) echo main ;;
+        feature/*|fix/*) echo develop ;;
+        release/*|hotfix/*) echo main ;;
+        *) return 1 ;;
+    esac
+}
+
 do_pr() {
-    local b; b="$(current_branch)"
-    [[ "$b" == "$PROTECTED_BRANCH" ]] && fail "el PR se abre desde develop o feature/*, no desde '$PROTECTED_BRANCH'"
+    local b base; b="$(current_branch)"
+    base="$(pr_base_for "$b")" || fail "la rama '$b' no tiene destino de PR (usa feature/*, fix/*, release/*, hotfix/* o develop)"
     command -v gh >/dev/null 2>&1 || fail "necesitas GitHub CLI (gh) para crear PR"
     gh auth status >/dev/null 2>&1 || fail "gh no está autenticado; ejecuta: gh auth login"
 
@@ -170,13 +179,13 @@ do_pr() {
         do_push
     fi
 
-    if git rev-list --count "$REMOTE/$PROTECTED_BRANCH..$b" 2>/dev/null | grep -qx 0; then
-        log "no hay commits de '$b' que no estén en '$PROTECTED_BRANCH'; no se abre PR"
+    if git rev-list --count "$REMOTE/$base..$b" 2>/dev/null | grep -qx 0; then
+        log "no hay commits de '$b' que no estén en '$base'; no se abre PR"
         return 0
     fi
 
     local existing
-    existing="$(gh pr list --head "$b" --base "$PROTECTED_BRANCH" --state open --json url --jq '.[0].url' 2>/dev/null || true)"
+    existing="$(gh pr list --head "$b" --base "$base" --state open --json url --jq '.[0].url' 2>/dev/null || true)"
     if [[ -n "$existing" ]]; then
         log "ya existe un PR abierto: $existing"
         return 0
@@ -192,11 +201,11 @@ do_pr() {
     [[ -n "$title" ]] || fail "el título del PR no puede estar vacío"
     body="Commits incluidos:
 
-$(git log --oneline "$REMOTE/$PROTECTED_BRANCH..$b" | sed 's/^/- /')"
+$(git log --oneline "$REMOTE/$base..$b" | sed 's/^/- /')"
 
-    ask "¿Abrir PR de '$b' hacia '$PROTECTED_BRANCH' con el título \"$title\"?" || { log "PR cancelado"; return 0; }
+    ask "¿Abrir PR de '$b' hacia '$base' con el título \"$title\"?" || { log "PR cancelado"; return 0; }
     local url
-    url="$(gh pr create --base "$PROTECTED_BRANCH" --head "$b" --title "$title" --body "$body")"
+    url="$(gh pr create --base "$base" --head "$b" --title "$title" --body "$body")"
     log "PR creado: $url"
 }
 
@@ -229,7 +238,7 @@ do_merge_pr() {
     IFS=$'\t' read -r state mergeable title base head url <<< "$info"
 
     [[ "$state" == "OPEN" ]] || fail "el PR #$n no está abierto (estado: $state)"
-    [[ "$base" == "$PROTECTED_BRANCH" ]] || fail "el PR #$n apunta a '$base', no a '$PROTECTED_BRANCH'"
+    [[ "$base" == "$PROTECTED_BRANCH" || "$base" == "develop" ]] || fail "el PR #$n apunta a '$base'; solo se fusionan PR hacia main o develop"
     [[ "$mergeable" == "MERGEABLE" ]] || fail "el PR #$n no se puede fusionar (estado: $mergeable). Resuelve conflictos en GitHub"
 
     log "PR #$n: $title"
@@ -238,16 +247,19 @@ do_merge_pr() {
     ask "¿Fusionar el PR #$n en '$base'?" || { log "fusión cancelada"; return 0; }
 
     gh pr merge "$n" "$method" || fail "GitHub no pudo fusionar el PR #$n"
-    log "PR #$n fusionado"
-    sync_after_merge
+    log "PR #$n fusionado en '$base'"
+    sync_after_merge "$base"
 }
 
-sync_after_merge() {
-    local original; original="$(current_branch)"
+sync_after_merge() {  # $1 = rama destino del PR fusionado
+    local target="$1" original; original="$(current_branch)"
     fetch_remote
-    git checkout -q "$PROTECTED_BRANCH"
-    git merge --ff-only -q "$REMOTE/$PROTECTED_BRANCH" && log "$PROTECTED_BRANCH local actualizada"
-    if git show-ref --verify --quiet "refs/heads/develop"; then
+    if git show-ref --verify --quiet "refs/heads/$target"; then
+        git checkout -q "$target"
+        git merge --ff-only -q "$REMOTE/$target" && log "$target local actualizada"
+    fi
+    # Si se fusionó en main, develop debe incorporar el merge (fast-forward)
+    if [[ "$target" == "$PROTECTED_BRANCH" ]] && git show-ref --verify --quiet "refs/heads/develop"; then
         git checkout -q develop
         if git merge --ff-only -q "$REMOTE/$PROTECTED_BRANCH" 2>/dev/null; then
             log "develop local actualizada desde $PROTECTED_BRANCH"
