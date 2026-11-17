@@ -6,6 +6,10 @@
 #   --push         Subir la rama actual a origin.
 #   --commit       Crear un commit con los cambios locales.
 #   --pr           Abrir un Pull Request de la rama actual hacia main (requiere gh).
+#   --list-prs     Listar los Pull Requests abiertos.
+#   --merge-pr N   Fusionar el PR N hacia main (merge commit). Pide confirmación.
+#   --squash       Con --merge-pr: fusionar en un solo commit.
+#   --rebase       Con --merge-pr: fusionar reaplicando commits.
 #   -m "texto"     Mensaje del commit (con --commit).
 #   -y             No preguntar confirmaciones (uso no interactivo).
 #   -h, --help     Mostrar ayuda.
@@ -196,6 +200,64 @@ $(git log --oneline "$REMOTE/$PROTECTED_BRANCH..$b" | sed 's/^/- /')"
     log "PR creado: $url"
 }
 
+require_gh() {
+    command -v gh >/dev/null 2>&1 || fail "necesitas GitHub CLI (gh)"
+    gh auth status >/dev/null 2>&1 || fail "gh no está autenticado; ejecuta: gh auth login"
+}
+
+do_list_prs() {
+    require_gh
+    local out
+    out="$(gh pr list --state open 2>/dev/null)"
+    if [[ -z "$out" ]]; then
+        log "no hay Pull Requests abiertos"
+    else
+        log "Pull Requests abiertos:"
+        printf '%s\n' "$out" | sed 's/^/  /'
+    fi
+}
+
+do_merge_pr() {
+    local n="$1" method="${2:---merge}"
+    require_gh
+    [[ "$n" =~ ^[0-9]+$ ]] || fail "número de PR no válido: '$n'"
+
+    local info state mergeable title base head
+    info="$(gh pr view "$n" --json state,mergeable,title,baseRefName,headRefName,url \
+        --jq '[.state,.mergeable,.title,.baseRefName,.headRefName,.url] | @tsv')" \
+        || fail "no existe el PR #$n"
+    IFS=$'\t' read -r state mergeable title base head url <<< "$info"
+
+    [[ "$state" == "OPEN" ]] || fail "el PR #$n no está abierto (estado: $state)"
+    [[ "$base" == "$PROTECTED_BRANCH" ]] || fail "el PR #$n apunta a '$base', no a '$PROTECTED_BRANCH'"
+    [[ "$mergeable" == "MERGEABLE" ]] || fail "el PR #$n no se puede fusionar (estado: $mergeable). Resuelve conflictos en GitHub"
+
+    log "PR #$n: $title"
+    log "  $head -> $base  ($url)"
+    log "  método: ${method#--}"
+    ask "¿Fusionar el PR #$n en '$base'?" || { log "fusión cancelada"; return 0; }
+
+    gh pr merge "$n" "$method" || fail "GitHub no pudo fusionar el PR #$n"
+    log "PR #$n fusionado"
+    sync_after_merge
+}
+
+sync_after_merge() {
+    local original; original="$(current_branch)"
+    fetch_remote
+    git checkout -q "$PROTECTED_BRANCH"
+    git merge --ff-only -q "$REMOTE/$PROTECTED_BRANCH" && log "$PROTECTED_BRANCH local actualizada"
+    if git show-ref --verify --quiet "refs/heads/develop"; then
+        git checkout -q develop
+        if git merge --ff-only -q "$REMOTE/$PROTECTED_BRANCH" 2>/dev/null; then
+            log "develop local actualizada desde $PROTECTED_BRANCH"
+        else
+            warn "develop tiene commits que no están en $PROTECTED_BRANCH; no se ha tocado"
+        fi
+    fi
+    git checkout -q "$original" 2>/dev/null || true
+}
+
 menu() {
     while true; do
         echo
@@ -206,7 +268,9 @@ menu() {
         echo "  4) Commit y subir (3 + 2)"
         echo "  5) Ver estado"
         echo "  6) Abrir PR hacia main (gh)"
-        echo "  7) Salir"
+        echo "  7) Listar PR abiertos"
+        echo "  8) Fusionar un PR en main"
+        echo "  9) Salir"
         read -r -p "Opción: " opt
         case "$opt" in
             1) do_pull ;;
@@ -215,20 +279,26 @@ menu() {
             4) do_commit && do_push ;;
             5) show_state ;;
             6) do_pr ;;
-            7|q|"") exit 0 ;;
+            7) do_list_prs ;;
+            8) read -r -p "Número de PR: " n; do_merge_pr "$n" "$MERGE_METHOD" ;;
+            9|q|"") exit 0 ;;
             *) warn "opción no válida" ;;
         esac
     done
 }
 
 # ---- Parseo de argumentos ----
-DO_PULL=0; DO_PUSH=0; DO_COMMIT=0; DO_PR=0; ASSUME_YES=0; MESSAGE=""; PR_TITLE=""
+DO_PULL=0; DO_PUSH=0; DO_COMMIT=0; DO_PR=0; DO_LIST=0; MERGE_PR=""; MERGE_METHOD="--merge"; ASSUME_YES=0; MESSAGE=""; PR_TITLE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --pull) DO_PULL=1 ;;
         --push) DO_PUSH=1 ;;
         --commit) DO_COMMIT=1 ;;
         --pr) DO_PR=1 ;;
+        --list-prs) DO_LIST=1 ;;
+        --merge-pr) shift; MERGE_PR="${1:-}"; [[ -n "$MERGE_PR" ]] || fail "--merge-pr requiere el número del PR" ;;
+        --squash) MERGE_METHOD="--squash" ;;
+        --rebase) MERGE_METHOD="--rebase" ;;
         -t) shift; PR_TITLE="${1:-}"; [[ -n "$PR_TITLE" ]] || fail "-t requiere un texto" ;;
         -m) shift; MESSAGE="${1:-}"; [[ -n "$MESSAGE" ]] || fail "-m requiere un texto" ;;
         -y) ASSUME_YES=1 ;;
@@ -240,7 +310,7 @@ done
 
 check_repo
 
-if (( DO_PULL + DO_PUSH + DO_COMMIT + DO_PR == 0 )); then
+if (( DO_PULL + DO_PUSH + DO_COMMIT + DO_PR + DO_LIST == 0 )) && [[ -z "$MERGE_PR" ]]; then
     menu
     exit 0
 fi
@@ -250,4 +320,6 @@ fi
 (( DO_COMMIT )) && do_commit
 (( DO_PUSH ))   && do_push
 (( DO_PR ))     && do_pr
+(( DO_LIST ))   && do_list_prs
+[[ -n "$MERGE_PR" ]] && do_merge_pr "$MERGE_PR" "$MERGE_METHOD"
 show_state
