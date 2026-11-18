@@ -97,7 +97,7 @@ sensibles hasta completar la auditoría de la fase 8.
 Dependencias: ninguna para A1. Después, en orden de la lista.
 
 ### A1 — Entorno de desarrollo (equipo de desarrollo)
-- **Estado:** in_progress
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** usuario (instalación) + Backend (script de verificación)
 - **Dependencias:** ninguna
@@ -107,7 +107,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - Existe OVMF_CODE en `/usr/share/OVMF/`.
   - `rustc --version` y `rustup target list --installed` incluyen `x86_64-unknown-uefi`.
   - `tools/check-env.sh` verifica lo anterior y termina con código 0.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #6 mergeado en develop, commit f22b8f9; instalación de paquetes/rust en el equipo de desarrollo confirmada por el usuario)
 
 ### A2 — Cargador UEFI mínimo
 - **Estado:** pending
