@@ -144,14 +144,14 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #9 mergeado en develop, commit d6441a4)
 
 ### A5 — Procesos y espacios de direcciones aislados
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A4
 - **Descripción:** creación de procesos con tabla de páginas propia.
 - **Criterios de aceptación:**
   - Dos procesos de prueba no pueden leer la memoria del otro (fallo controlado).
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #10 mergeado en develop, commit 57ff6c1)
 
 ### A6 — IPC y capacidades simples
 - **Estado:** pending
