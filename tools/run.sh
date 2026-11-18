@@ -4,7 +4,7 @@
 # Por defecto se ejecuta sin ventana (`-display none`), guarda la salida serie,
 # el debugcon y una captura de pantalla (`screendump`) para poder verificar el
 # mensaje dibujado vía GOP. El proceso termina automáticamente y devuelve 0 si
-# el kernel confirma por COM1 que recibió BootInfo.
+# el kernel imprime "Meridian booting" por COM1.
 #
 # Uso:
 #   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot]
@@ -128,7 +128,7 @@ while (( SECONDS < deadline )); do
         log "QEMU terminó antes de tiempo"
         break
     fi
-    if [[ -f "$SERIAL_LOG" ]] && grep -q "MERIDIAN-KERNEL: entered" "$SERIAL_LOG"; then
+    if [[ -f "$SERIAL_LOG" ]] && grep -q "Meridian booting" "$SERIAL_LOG"; then
         success=1
         break
     fi
@@ -179,7 +179,7 @@ fi
 
 echo
 if (( success )); then
-    log "OK: el kernel arrancó y recibió BootInfo."
+    log "OK: el kernel arrancó y escribió 'Meridian booting' por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -190,7 +190,7 @@ if (( success )); then
     exit 0
 fi
 
-log "FALLO: no se observó 'MERIDIAN-KERNEL: entered' en COM1."
+log "FALLO: no se observó 'Meridian booting' en COM1."
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"

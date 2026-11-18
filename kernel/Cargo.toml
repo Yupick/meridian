@@ -1,6 +1,6 @@
 [package]
 name = "meridian-kernel"
-description = "Microkernel de Meridian (stub de arranque A2)"
+description = "Microkernel de Meridian (consola COM1 + GOP de A3)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,5 @@ build = "build.rs"
 
 [dependencies]
 meridian-bootinfo = { path = "../bootinfo" }
+# Fuente bitmap 8x8 de dominio público; solo la tabla básica, sin Unicode.
+font8x8 = { version = "0.3", default-features = false }

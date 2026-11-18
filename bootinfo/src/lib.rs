@@ -75,6 +75,119 @@ impl FramebufferInfo {
     }
 }
 
+/// Tamaño de página usado por UEFI y por el kernel de Meridian.
+pub const PAGE_SIZE: u64 = 4096;
+
+/// Tipos de memoria UEFI (`EFI_MEMORY_TYPE`), con sus valores estables.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum MemoryType {
+    Reserved = 0,
+    LoaderCode = 1,
+    LoaderData = 2,
+    BootServicesCode = 3,
+    BootServicesData = 4,
+    RuntimeServicesCode = 5,
+    RuntimeServicesData = 6,
+    Conventional = 7,
+    Unusable = 8,
+    AcpiReclaim = 9,
+    AcpiNvs = 10,
+    MemoryMappedIo = 11,
+    MemoryMappedIoPortSpace = 12,
+    PalCode = 13,
+    Persistent = 14,
+}
+
+impl MemoryType {
+    /// Interpreta el campo `Type` de un descriptor UEFI.
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Reserved),
+            1 => Some(Self::LoaderCode),
+            2 => Some(Self::LoaderData),
+            3 => Some(Self::BootServicesCode),
+            4 => Some(Self::BootServicesData),
+            5 => Some(Self::RuntimeServicesCode),
+            6 => Some(Self::RuntimeServicesData),
+            7 => Some(Self::Conventional),
+            8 => Some(Self::Unusable),
+            9 => Some(Self::AcpiReclaim),
+            10 => Some(Self::AcpiNvs),
+            11 => Some(Self::MemoryMappedIo),
+            12 => Some(Self::MemoryMappedIoPortSpace),
+            13 => Some(Self::PalCode),
+            14 => Some(Self::Persistent),
+            _ => None,
+        }
+    }
+
+    /// Nombre corto y estable para diagnósticos.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::LoaderCode => "loader-code",
+            Self::LoaderData => "loader-data",
+            Self::BootServicesCode => "boot-code",
+            Self::BootServicesData => "boot-data",
+            Self::RuntimeServicesCode => "runtime-code",
+            Self::RuntimeServicesData => "runtime-data",
+            Self::Conventional => "usable",
+            Self::Unusable => "unusable",
+            Self::AcpiReclaim => "acpi-reclaim",
+            Self::AcpiNvs => "acpi-nvs",
+            Self::MemoryMappedIo => "mmio",
+            Self::MemoryMappedIoPortSpace => "mmio-port",
+            Self::PalCode => "pal-code",
+            Self::Persistent => "persistent",
+        }
+    }
+}
+
+/// Descriptor UEFI de memoria (`EFI_MEMORY_DESCRIPTOR`).
+///
+/// El firmware puede reportar un `descriptor_size` mayor que
+/// `size_of::<MemoryDescriptor>()`; por eso el mapa debe recorrerse con el
+/// stride indicado y no como un array de esta estructura. Los campos que aquí
+/// aparecen son los primeros 40 bytes del descriptor y conservan el orden de
+/// la especificación UEFI.
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct MemoryDescriptor {
+    /// Tipo de memoria (`EFI_MEMORY_TYPE`).
+    pub memory_type: u32,
+    /// Relleno de alineación (no contiene información).
+    pub reserved: u32,
+    /// Dirección física del primer byte del rango.
+    pub physical_start: u64,
+    /// Dirección virtual reportada por el firmware.
+    pub virtual_start: u64,
+    /// Número de páginas de 4 KiB del rango.
+    pub number_of_pages: u64,
+    /// Atributos de memoria UEFI.
+    pub attributes: u64,
+}
+
+impl MemoryDescriptor {
+    /// Tamaño mínimo de un descriptor UEFI (sin extensiones del firmware).
+    pub const MIN_SIZE: u64 = core::mem::size_of::<Self>() as u64;
+
+    /// Tipo de memoria interpretado, si el valor es conocido.
+    pub const fn kind(&self) -> Option<MemoryType> {
+        MemoryType::from_raw(self.memory_type)
+    }
+
+    /// `true` para memoria convencional reutilizable por el kernel.
+    pub const fn is_usable(&self) -> bool {
+        self.memory_type == MemoryType::Conventional as u32
+    }
+
+    /// Tamaño del rango en bytes, saturando si el firmware reporta un valor enorme.
+    pub const fn size_bytes(&self) -> u64 {
+        self.number_of_pages.saturating_mul(PAGE_SIZE)
+    }
+}
+
 /// Copia del mapa de memoria UEFI obtenido justo antes de `ExitBootServices()`.
 ///
 /// `buffer` apunta a una zona de memoria `LOADER_DATA` propiedad del bootloader.
@@ -103,6 +216,38 @@ impl MemoryMapInfo {
             Some(count) => count as usize,
             None => 0,
         }
+    }
+
+    /// Comprueba que la información del mapa es utilizable.
+    pub const fn is_sane(&self) -> bool {
+        self.buffer != 0
+            && self.descriptor_size >= MemoryDescriptor::MIN_SIZE
+            && self.size >= self.descriptor_size
+            && self.entry_count() > 0
+    }
+
+    /// Copia el descriptor `index` del mapa.
+    ///
+    /// # Safety
+    ///
+    /// El llamador debe garantizar que `buffer` apunta a `size` bytes legibles
+    /// y que siguen siendo válidos (el bootloader los conserva como memoria
+    /// `LOADER_DATA`). El método comprueba los límites aritméticos antes de
+    /// leer, pero no puede verificar la validez del puntero.
+    pub unsafe fn descriptor(&self, index: usize) -> Option<MemoryDescriptor> {
+        if !self.is_sane() || index >= self.entry_count() {
+            return None;
+        }
+        let offset = (index as u64).checked_mul(self.descriptor_size)?;
+        let end = offset.checked_add(MemoryDescriptor::MIN_SIZE)?;
+        if end > self.size {
+            return None;
+        }
+        let address = self.buffer.checked_add(offset)? as *const u8;
+        let descriptor = address.cast::<MemoryDescriptor>();
+        // SAFETY: el llamador garantiza que [buffer, buffer + size) es legible.
+        // `read_unaligned` permite que descriptor_size no esté alineado.
+        Some(unsafe { core::ptr::read_unaligned(descriptor) })
     }
 }
 
