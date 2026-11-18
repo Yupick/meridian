@@ -1,4 +1,4 @@
-# Arranque UEFI, consola, memoria, procesos, IPC y FS RAM (A2–A7)
+# Arranque UEFI, consola, memoria, procesos, IPC, FS RAM y login (A2–A8)
 
 A2 implementa el cargador mínimo de Meridian:
 
@@ -57,13 +57,27 @@ A7 añade un **servicio de archivos y directorios mínimo en memoria (RAM)**:
 - auto-pruebas de cada operación, incluido error controlado al borrar un
   directorio no vacío y denegación de escritura con capacidad read-only.
 
+A8 añade un **servicio de login y usuarios** (alpha):
+
+- usuarios con contraseña almacenada como hash **temporal** (no criptográfico,
+  marcado explícitamente como no apto para producción; en la fase 1/T1.4 se
+  sustituirá por Argon2id propio validado);
+- autenticación: login correcto abre sesión; credenciales incorrectas
+  (contraseña errónea o usuario inexistente) se rechazan con el mismo error
+  genérico, sin revelar si el usuario existe;
+- cada sesión autenticada recibe una tabla de capacidades con acceso `READ|WRITE`
+  al sistema de archivos y su directorio personal (`/home/<usuario>`), sobre el
+  que puede operar según esas capacidades;
+- pantalla de login textual dibujada por la consola (frontend de texto) y
+  auto-pruebas integradas de login, rechazo genérico y capacidades sobre home.
+
 ## Estructura
 
 ```
 bootinfo/   contrato #[repr(C)] compartido entre bootloader y kernel
 bootloader/ aplicación UEFI: GOP + FAT + cargador ELF + handoff
-kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades, IPC y FS
-  src/main.rs         arranque, init GDT/IDT, pila propia, A3–A7
+kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades, IPC, FS y auth
+  src/main.rs         arranque, init GDT/IDT, pila propia, A3–A8
   src/console.rs      UART 16550, cursor de texto y salida combinada
   src/framebuffer.rs  escritura lineal en GOP (RGB/BGR/bitmask) y fuente 8x8
   src/memory.rs       recorrido y resumen del mapa de memoria UEFI
@@ -76,11 +90,14 @@ kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades, IPC y FS
   mm/buddy.rs         asignador buddy de páginas/bloques y contadores
   mm/paging.rs        tablas 4 niveles, W^X y espacios por proceso
   mm/selftest.rs      pruebas de buddy y W^X con marcadores A4
-services/fs/  servicio de archivos en RAM (A7)
+services/fs/    servicio de archivos en RAM (A7)
   mod.rs              nodos/atributos tipados y operaciones fs con capacidades
   selftest.rs         pruebas A7 de operaciones y control de acceso
+services/auth/  servicio de login y usuarios (A8, alpha)
+  mod.rs              usuarios, hash temporal, login y sesiones con capacidades/home
+  selftest.rs         pruebas A8 de login, rechazo genérico y capacidades sobre home
 tools/build.sh  compila y genera build/meridian.img
-tools/run.sh    arranca OVMF/QEMU y valida marcadores A3–A7
+tools/run.sh    arranca OVMF/QEMU y valida marcadores A3–A8
 ```
 
 ## Construcción y ejecución
@@ -112,8 +129,9 @@ build/screen.png    la misma captura convertida con Pillow, si está disponible
 ```
 
 El script devuelve 0 cuando COM1 contiene `Meridian booting`, los marcadores de
-A4, A5, A6 y A7; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL`,
-`A6: ... FAIL` o `A7: ... FAIL`, o falta alguna prueba requerida, devuelve 1.
+A4, A5, A6, A7 y A8; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL`,
+`A6: ... FAIL`, `A7: ... FAIL` o `A8: ... FAIL`, o falta alguna prueba
+requerida, devuelve 1.
 
 ## Handoff
 
@@ -424,6 +442,36 @@ Esto demuestra los criterios de aceptación:
    objeto FS, `write`/`mkdir`/`rm`/`rmdir` devuelven `RightsDenied`, mientras
    que `read`/`ls`/`cd` siguen permitidos.
 
+## Verificación de A8
+
+`tools/run.sh` exige los marcadores de A8 y falla ante `A8: ... FAIL` o pruebas
+faltantes. La salida esperada por COM1 incluye:
+
+```
+=== Meridian login ===
+usuario: _
+contrasena: _
+(alpha: hash temporal, no apto para produccion)
+A8: login screen shown
+A8: login correcto abre sesion (user=alice, home=/home/alice)
+A8: invalid credentials rejected without user disclosure (wrong-pass == unknown-user == InvalidCredentials)
+A8: session has capabilities over personal directory (RW en /home/alice: write/read/mkdir ok; cap sin WRITE denegada)
+A8: login/users tests PASS (login ok, rechazo generico, capacidades sobre home)
+```
+
+Esto demuestra los criterios de aceptación:
+
+1. **Autenticación:** el login correcto abre sesión; una contraseña incorrecta
+   y un usuario inexistente se rechazan con el mismo error genérico
+   (`InvalidCredentials`), sin revelar si el usuario existe.
+2. **Capacidades de sesión:** tras el login, la sesión recibe capacidades
+   `READ|WRITE` sobre el sistema de archivos y opera sobre su directorio
+   personal (`/home/<usuario>`: crear/escribir/leer). Una capacidad sin `WRITE`
+   no permite modificarlo.
+
+El hash de contraseña es **temporal y no apto para producción** (sustituible
+por Argon2id propio validado en la fase 1, T1.4).
+
 ## Verificación de la consola
 
 Serie (`build/serial.log`): el kernel escribe el título y un resumen de
@@ -444,14 +492,20 @@ meridian: pantalla GOP dibujada
 meridian: ExitBootServices completado, saltando al kernel
 ```
 
-## Limitaciones / pendientes para A8
+## Limitaciones / pendientes para A9
 
+- El login/almacén de usuarios es en memoria (sin persistencia), con hash
+  temporal **no apto para producción** (pendiente Argon2id propio en T1.4).
+  No hay entrada interactiva real de credenciales ni gestión de usuarios/grupos;
+  la "pantalla de login" y la autenticación se ejercitan en auto-pruebas.
+- No existe aún la terminal/shell interactiva (A9) ni comandos de usuario;
+  tampoco gate de acceso a terminal basado en sesión.
 - El sistema de archivos es volátil (RAM), de tamaño/capacidad fija y sin
   persistencia, permisos por usuario ni cuotas; vive integrado en el kernel
   (módulo `services/fs`) sin interfaz de servicio/IPC expuesta a procesos de
   usuario.
 - No hay scheduler, contexto de ejecución en user mode (ring 3) ni syscalls;
-  los "procesos" de A5/A6/A7 son estructuras lógicas con PML4 y tabla de
+  los "procesos" de A5/A6/A7/A8 son estructuras lógicas con PML4 y tabla de
   capacidades ejercitadas desde el kernel con conmutación de `CR3`, no hilos de
   usuario independientes.
 - La tabla de procesos no es global: las auto-pruebas mantienen los `Process`
