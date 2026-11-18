@@ -188,7 +188,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #13 mergeado en develop, commit b4bd33b)
 
 ### A9 — Terminal alpha
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Frontend (interfaz de texto) + Backend (integración)
 - **Dependencias:** A3, A8
@@ -206,7 +206,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - Cada comando funciona en QEMU con una prueba scriptada.
   - `rmdir` sobre un directorio con contenido muestra error claro.
   - Sin login no se accede a la terminal.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #14 mergeado en develop, commit 71fab07)
 
 ### A10 — Pruebas y cierre de alpha
 - **Estado:** pending
