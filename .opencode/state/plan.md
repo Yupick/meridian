@@ -122,7 +122,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #7 mergeado en develop, commit f603425)
 
 ### A3 — Consola del kernel
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A2
@@ -130,7 +130,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - "Meridian booting" aparece en la consola serie de QEMU.
   - El mensaje aparece también en pantalla.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #8 mergeado en develop, commit 7d03685)
 
 ### A4 — Memoria física y virtual
 - **Estado:** pending
