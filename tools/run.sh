@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A4).
+# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A5).
 #
 # Por defecto se ejecuta sin ventana (`-display none`), guarda la salida serie,
 # el debugcon y una captura de pantalla (`screendump`) para poder verificar el
 # mensaje dibujado vía GOP. El proceso termina automáticamente y devuelve 0 si
-# el kernel imprime "Meridian booting" por COM1 **y** los marcadores de A4:
+# el kernel imprime los marcadores esperados por COM1:
+#   Meridian booting
 #   A4: buddy alloc/free tests PASS
 #   A4: W^X check PASS
-# Cualquier marcador "A4: ... FAIL" hace fallar el script.
+#   A5: process creation OK
+#   A5: process isolation test PASS
+# Cualquier marcador "A4: ... FAIL" o "A5: ... FAIL" hace fallar el script.
 #
 # Uso:
 #   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot]
@@ -51,7 +54,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -128,6 +131,8 @@ deadline=$((SECONDS + TIMEOUT))
 boot_ok=0
 buddy_ok=0
 wx_ok=0
+a5_create_ok=0
+a5_isolation_ok=0
 fail_marker=0
 while (( SECONDS < deadline )); do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -138,12 +143,14 @@ while (( SECONDS < deadline )); do
         if grep -q "Meridian booting" "$SERIAL_LOG"; then boot_ok=1; fi
         if grep -q "A4: buddy alloc/free tests PASS" "$SERIAL_LOG"; then buddy_ok=1; fi
         if grep -q "A4: W^X check PASS" "$SERIAL_LOG"; then wx_ok=1; fi
-        if grep -q "A4: .*FAIL" "$SERIAL_LOG"; then
+        if grep -q "A5: process creation OK" "$SERIAL_LOG"; then a5_create_ok=1; fi
+        if grep -q "A5: process isolation test PASS" "$SERIAL_LOG"; then a5_isolation_ok=1; fi
+        if grep -Eq "A4: .*FAIL|A5: .*FAIL" "$SERIAL_LOG"; then
             fail_marker=1
             break
         fi
     fi
-    if (( boot_ok && buddy_ok && wx_ok )); then
+    if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok )); then
         break
     fi
     sleep 0.5
@@ -193,11 +200,11 @@ fi
 
 echo
 if (( fail_marker )); then
-    log "FALLO: el kernel reportó un marcador 'A4: ... FAIL' (ver COM1)."
+    log "FALLO: el kernel reportó un marcador 'A4/A5 ... FAIL' (ver COM1)."
     exit 1
 fi
-if (( boot_ok && buddy_ok && wx_ok )); then
-    log "OK: el kernel arrancó ('Meridian booting') y pasó las pruebas de A4 por COM1."
+if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok )); then
+    log "OK: kernel arrancó ('Meridian booting'), pasó A4 y A5 (aislamiento de procesos) por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -208,7 +215,7 @@ if (( boot_ok && buddy_ok && wx_ok )); then
     exit 0
 fi
 
-log "FALLO: marcadores pendientes (boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok)."
+log "FALLO: marcadores pendientes (boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok)."
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"
