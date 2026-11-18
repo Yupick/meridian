@@ -1,28 +1,21 @@
-//! Kernel de Meridian — consola de arranque (A3) y memoria física/virtual (A4).
-//!
-//! El bootloader entrega un `BootInfo` con el mapa de memoria UEFI final y la
-//! descripción del framebuffer GOP. El kernel valida la estructura, inicializa
-//! la consola COM1+GOP, resume el mapa, construye el asignador buddy y las
-//! tablas de página propias con W^X, y ejecuta las auto-pruebas de A4.
-//!
-//! Mensajes de aceptación: `Meridian booting` (A3) y los marcadores
-//! `A4: buddy alloc/free tests PASS` / `A4: W^X check PASS` (A4).
+//! Kernel de Meridian — consola (A3), memoria/paginación (A4) y procesos aislados (A5).
 
 #![no_main]
 #![no_std]
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use meridian_bootinfo::{BootInfo, PAGE_SIZE};
 
+mod arch;
 mod console;
 mod framebuffer;
 mod memory;
+mod proc;
 
-// Los módulos de MM vivieron originalmente en `kernel/mm/` (había un
-// `.gitkeep` esperando esta tarea), fuera de `src/`; se reutiliza ese directorio
-// sin mover la estructura del crate.
+// Módulos de MM en `kernel/mm/` (fuera de `src/`).
 #[path = "../mm/mod.rs"]
 mod mm;
 
@@ -33,21 +26,40 @@ use mm::{paging, selftest, Reservations};
 
 const KIB: u64 = 1024;
 
+static BOOT_INFO_PTR: AtomicPtr<BootInfo> = AtomicPtr::new(core::ptr::null_mut());
+
 /// Punto de entrada SysV64 invocado por el bootloader.
-///
-/// El puntero apunta a una página `LOADER_DATA` reservada por el bootloader y
-/// sigue siendo válido durante toda la vida del kernel; el mapa de memoria
-/// apunta a otra zona `LOADER_DATA` que tampoco debe liberarse.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "sysv64" fn _start(boot_info: *const BootInfo) -> ! {
+    BOOT_INFO_PTR.store(boot_info as *mut BootInfo, Ordering::SeqCst);
+
     if boot_info.is_null() {
         serial_fatal("Meridian booting\r\nMERIDIAN-KERNEL: ERROR: BootInfo nulo");
     }
 
-    // SAFETY: el contrato de arranque garantiza que el primer argumento apunta
-    // a un `BootInfo` válido en memoria física legible. La comprobación de
-    // firma y versión se hace a continuación antes de usar el resto de campos.
+    // Inicializar GDT/TSS propios e IDT antes de cambiar de pila, para que
+    // excepciones tempranas sean manejables con pila IST conocida.
+    // SAFETY: arranque temprano, mono-CPU, memoria identidad-mapeada.
+    unsafe {
+        arch::x86_64::gdt::init();
+        arch::x86_64::idt::init();
+    }
+
+    // Conmutar a la pila de kernel propia y continuar.
+    // SAFETY: continuación válida que nunca retorna.
+    unsafe {
+        arch::x86_64::gdt::switch_to_kernel_stack_and_jump(kernel_main);
+    }
+}
+
+extern "sysv64" fn kernel_main() -> ! {
+    let boot_info = BOOT_INFO_PTR.load(Ordering::SeqCst) as *const BootInfo;
+    if boot_info.is_null() {
+        serial_fatal("Meridian booting\r\nMERIDIAN-KERNEL: ERROR: BootInfo perdido");
+    }
+
+    // SAFETY: puntero válido entregado por bootloader.
     let info = unsafe { &*boot_info };
 
     if !info.is_valid() {
@@ -81,17 +93,16 @@ pub extern "sysv64" fn _start(boot_info: *const BootInfo) -> ! {
     print_framebuffer(&mut console, info);
     print_memory_map(&mut console, info);
     print_kernel_image(&mut console, info);
+    let _ = writeln!(
+        console,
+        "Kernel stack: own stack active (top=0x{:016X})",
+        arch::x86_64::gdt::kernel_stack_top()
+    );
 
     console.println("");
 
     // --- A4: memoria física, paginación y W^X -----------------------------
-    let rsp: u64;
-    // SAFETY: solo se lee el puntero de pila; no se accede a memoria ni se
-    // modifica el estado de la CPU.
-    unsafe {
-        core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags));
-    }
-
+    let rsp = read_rsp();
     let reservations = Reservations::new(info, boot_info as u64, rsp);
     let summary = match buddy::init(&info.memory_map, &reservations.ranges) {
         Ok(stats) => stats,
@@ -106,7 +117,7 @@ pub extern "sysv64" fn _start(boot_info: *const BootInfo) -> ! {
     );
     let _ = writeln!(
         console,
-        "A4: reserved ({} ranges): low 1 MiB, kernel image, BootInfo, memory map, GOP framebuffer, firmware stack",
+        "A4: reserved ({} ranges): low 1 MiB, kernel image, BootInfo, memory map, GOP framebuffer, stack(s)",
         reservations.count
     );
 
@@ -123,17 +134,37 @@ pub extern "sysv64" fn _start(boot_info: *const BootInfo) -> ! {
         a4_fatal(&mut console, &format_args!("auto-pruebas A4 fallidas"));
     }
 
+    // --- A5: procesos y aislamiento de espacios de direcciones ------------
+    console.println("");
+    if !proc::selftest::run(&mut console) {
+        a5_fatal(&mut console);
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
 
     halt()
 }
 
-/// Informa de un fallo de A4 por consola (y por serie) y detiene la CPU.
+fn read_rsp() -> u64 {
+    let rsp: u64;
+    // SAFETY: solo lectura del puntero de pila.
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags));
+    }
+    rsp
+}
+
 fn a4_fatal(console: &mut Console, reason: &core::fmt::Arguments<'_>) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "A4: INIT FAIL: {reason}");
     let _ = writeln!(console, "A4: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn a5_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "A5: SELFTEST FAILED - halting CPU");
     halt()
 }
 
@@ -228,7 +259,6 @@ fn pixel_format_name(raw: u32) -> &'static str {
     }
 }
 
-/// Emite un mensaje de emergencia solo por COM1 antes de detener la CPU.
 fn serial_fatal(message: &str) -> ! {
     let mut serial = Serial::new();
     serial.write_crlf();
@@ -245,8 +275,7 @@ fn serial_fatal(message: &str) -> ! {
 
 fn halt() -> ! {
     loop {
-        // SAFETY: HLT no accede a memoria. Si las interrupciones están
-        // deshabilitadas (estado normal tras el handoff), la CPU queda parada.
+        // SAFETY: HLT detiene la CPU hasta interrupción.
         unsafe {
             core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
         }
