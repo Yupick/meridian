@@ -227,7 +227,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **T1.2 — Servicio de bloques** — pending, alta, Backend. Dependencias: T1.1. Criterio: lectura y escritura de sectores con virtio-blk en QEMU.
 - **T1.3 — Sistema de objetos en disco** — pending, alta, Db + Backend. Dependencias: T1.2. B+ trees para índices, extents para datos, copy-on-write y checksums. Criterio: datos íntegros tras corte de energía simulado.
 - **T1.4 — Criptografía base** — completed, alta, Backend + QA. Dependencias: ninguna (puede hacerse en paralelo). AES-256-XTS, SHA-256, Argon2id y Ed25519 propios. Criterio: pasan todos los vectores oficiales NIST/RFC.
-  - **completed-at:** 2026-11-18 (rama `feature/T1.4-crypto-base`; `tests/run-crypto-vectors.sh` OK en debug y release, 14/14 tests)
+  - **completed-at:** 2026-11-18 (PR #17 mergeado en develop, commit 0ec845d; `tests/run-crypto-vectors.sh` OK en debug y release, 14/14 tests)
 - **T1.5 — Cifrado de volumen** — pending, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
 
 ## Fase 2 — Red y servicios de servidor (pending)
