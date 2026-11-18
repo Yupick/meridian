@@ -1,0 +1,10 @@
+# Canal estable de Rust usado por Meridian.
+#
+# Probado con rustc 1.100.0. La crate `uefi` 0.41 exige Rust >= 1.91.
+# Ambos targets son necesarios para construir el bootloader (UEFI) y el kernel
+# (bare-metal x86-64).
+[toolchain]
+channel = "stable"
+profile = "minimal"
+targets = ["x86_64-unknown-uefi", "x86_64-unknown-none"]
+components = ["rust-src", "llvm-tools"]

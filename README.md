@@ -7,7 +7,16 @@ desarrollado desde cero en Rust.
 
 ## Estado
 
-Fase 0 (inicio del proyecto): entorno de desarrollo y arranque en QEMU.
+Fase 0 (Alpha) completada: arranque UEFI, consola, memoria, procesos, IPC,
+sistema de archivos RAM, login y terminal scriptada verificados en QEMU con
+`tests/run-alpha.sh`. Ver `docs/alpha.md`.
+
+## Arranque rápido (Alpha)
+
+```bash
+tools/check-env.sh
+tests/run-alpha.sh
+```
 
 ## Principios
 

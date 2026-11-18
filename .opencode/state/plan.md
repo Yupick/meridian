@@ -97,7 +97,7 @@ sensibles hasta completar la auditoría de la fase 8.
 Dependencias: ninguna para A1. Después, en orden de la lista.
 
 ### A1 — Entorno de desarrollo (equipo de desarrollo)
-- **Estado:** in_progress
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** usuario (instalación) + Backend (script de verificación)
 - **Dependencias:** ninguna
@@ -107,10 +107,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - Existe OVMF_CODE en `/usr/share/OVMF/`.
   - `rustc --version` y `rustup target list --installed` incluyen `x86_64-unknown-uefi`.
   - `tools/check-env.sh` verifica lo anterior y termina con código 0.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #6 mergeado en develop, commit f22b8f9; instalación de paquetes/rust en el equipo de desarrollo confirmada por el usuario)
 
 ### A2 — Cargador UEFI mínimo
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A1
@@ -119,10 +119,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - `tools/build.sh` genera la imagen FAT.
   - `tools/run.sh` arranca la imagen en QEMU con OVMF sin errores.
   - Se muestra un mensaje en pantalla GOP.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #7 mergeado en develop, commit f603425)
 
 ### A3 — Consola del kernel
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A2
@@ -130,10 +130,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - "Meridian booting" aparece en la consola serie de QEMU.
   - El mensaje aparece también en pantalla.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #8 mergeado en develop, commit 7d03685)
 
 ### A4 — Memoria física y virtual
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A3
@@ -141,20 +141,20 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - Pruebas de reserva y liberación de páginas sin fugas.
   - Ninguna página es escribible y ejecutable a la vez.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #9 mergeado en develop, commit d6441a4)
 
 ### A5 — Procesos y espacios de direcciones aislados
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A4
 - **Descripción:** creación de procesos con tabla de páginas propia.
 - **Criterios de aceptación:**
   - Dos procesos de prueba no pueden leer la memoria del otro (fallo controlado).
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #10 mergeado en develop, commit 57ff6c1)
 
 ### A6 — IPC y capacidades simples
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A5
@@ -163,10 +163,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - Un proceso envía un mensaje a otro por un puerto.
   - Un proceso sin capacidad recibe error al usar el recurso.
   - Una capacidad puede reducirse, nunca ampliarse.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #11 mergeado en develop, commit a93b9bb)
 
 ### A7 — Servicio de archivos mínimo
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend (servicio) + Db (modelo de objetos)
 - **Dependencias:** A6
@@ -174,10 +174,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - Pruebas unitarias de cada operación, incluido error al borrar un directorio no vacío.
   - Una capacidad de solo lectura no permite escribir.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #12 mergeado en develop, commit 2aa0f1c)
 
 ### A8 — Servicio de login y usuarios
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend (servicio) + Frontend (pantalla de login)
 - **Dependencias:** A6, A7
@@ -185,10 +185,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - Login correcto abre la sesión; contraseña incorrecta se rechaza sin revelar si el usuario existe.
   - Tras login, el usuario tiene capacidades sobre su directorio personal.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #13 mergeado en develop, commit b4bd33b)
 
 ### A9 — Terminal alpha
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Frontend (interfaz de texto) + Backend (integración)
 - **Dependencias:** A3, A8
@@ -206,10 +206,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - Cada comando funciona en QEMU con una prueba scriptada.
   - `rmdir` sobre un directorio con contenido muestra error claro.
   - Sin login no se accede a la terminal.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #14 mergeado en develop, commit 71fab07)
 
 ### A10 — Pruebas y cierre de alpha
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** media
 - **Asignado:** QA (pruebas) + Docs (guía de uso)
 - **Dependencias:** A9
@@ -217,7 +217,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - `tests/run-alpha.sh` ejecuta login y todos los comandos de A9 y termina con código 0.
   - `docs/alpha.md` describe cómo construir, ejecutar y usar la terminal.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #15 mergeado en develop, commit ae57c85)
 
 ---
 
