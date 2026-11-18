@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A5).
+# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A6).
 #
 # Por defecto se ejecuta sin ventana (`-display none`), guarda la salida serie,
 # el debugcon y una captura de pantalla (`screendump`) para poder verificar el
@@ -10,7 +10,11 @@
 #   A4: W^X check PASS
 #   A5: process creation OK
 #   A5: process isolation test PASS
-# Cualquier marcador "A4: ... FAIL" o "A5: ... FAIL" hace fallar el script.
+#   A6: ipc send/recv test PASS
+#   A6: capability denied without rights PASS
+#   A6: capability reduction/attenuation PASS
+#   A6: ipc/capabilities tests PASS
+# Cualquier marcador "A4/A5/A6 ... FAIL" hace fallar el script.
 #
 # Uso:
 #   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot]
@@ -54,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -133,6 +137,10 @@ buddy_ok=0
 wx_ok=0
 a5_create_ok=0
 a5_isolation_ok=0
+a6_ipc_ok=0
+a6_denied_ok=0
+a6_reduce_ok=0
+a6_summary_ok=0
 fail_marker=0
 while (( SECONDS < deadline )); do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -145,12 +153,17 @@ while (( SECONDS < deadline )); do
         if grep -q "A4: W^X check PASS" "$SERIAL_LOG"; then wx_ok=1; fi
         if grep -q "A5: process creation OK" "$SERIAL_LOG"; then a5_create_ok=1; fi
         if grep -q "A5: process isolation test PASS" "$SERIAL_LOG"; then a5_isolation_ok=1; fi
-        if grep -Eq "A4: .*FAIL|A5: .*FAIL" "$SERIAL_LOG"; then
+        if grep -q "A6: ipc send/recv test PASS" "$SERIAL_LOG"; then a6_ipc_ok=1; fi
+        if grep -q "A6: capability denied without rights PASS" "$SERIAL_LOG"; then a6_denied_ok=1; fi
+        if grep -q "A6: capability reduction/attenuation PASS" "$SERIAL_LOG"; then a6_reduce_ok=1; fi
+        if grep -q "A6: ipc/capabilities tests PASS" "$SERIAL_LOG"; then a6_summary_ok=1; fi
+        if grep -Eq "A4: .*FAIL|A5: .*FAIL|A6: .*FAIL" "$SERIAL_LOG"; then
             fail_marker=1
             break
         fi
     fi
-    if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok )); then
+    if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok \
+          && a6_ipc_ok && a6_denied_ok && a6_reduce_ok && a6_summary_ok )); then
         break
     fi
     sleep 0.5
@@ -200,11 +213,12 @@ fi
 
 echo
 if (( fail_marker )); then
-    log "FALLO: el kernel reportó un marcador 'A4/A5 ... FAIL' (ver COM1)."
+    log "FALLO: el kernel reportó un marcador 'A4/A5/A6 ... FAIL' (ver COM1)."
     exit 1
 fi
-if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok )); then
-    log "OK: kernel arrancó ('Meridian booting'), pasó A4 y A5 (aislamiento de procesos) por COM1."
+if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok \
+      && a6_ipc_ok && a6_denied_ok && a6_reduce_ok && a6_summary_ok )); then
+    log "OK: kernel arrancó ('Meridian booting'), pasó A4, A5 (aislamiento de procesos) y A6 (IPC/capacidades) por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -215,7 +229,7 @@ if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok )); then
     exit 0
 fi
 
-log "FALLO: marcadores pendientes (boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok)."
+log "FALLO: marcadores pendientes (boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok)."
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"

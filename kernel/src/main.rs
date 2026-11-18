@@ -1,4 +1,5 @@
-//! Kernel de Meridian — consola (A3), memoria/paginación (A4) y procesos aislados (A5).
+//! Kernel de Meridian — consola (A3), memoria/paginación (A4), procesos
+//! aislados (A5) e IPC por puertos con capacidades (A6).
 
 #![no_main]
 #![no_std]
@@ -15,7 +16,11 @@ mod framebuffer;
 mod memory;
 mod proc;
 
-// Módulos de MM en `kernel/mm/` (fuera de `src/`).
+// Módulos de capacidades, IPC y MM en directorios propios (fuera de `src/`).
+#[path = "../cap/mod.rs"]
+mod cap;
+#[path = "../ipc/mod.rs"]
+mod ipc;
 #[path = "../mm/mod.rs"]
 mod mm;
 
@@ -140,6 +145,12 @@ extern "sysv64" fn kernel_main() -> ! {
         a5_fatal(&mut console);
     }
 
+    // --- A6: IPC por puertos y capacidades simples ------------------------
+    console.println("");
+    if !ipc::selftest::run(&mut console) {
+        a6_fatal(&mut console);
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
 
@@ -165,6 +176,12 @@ fn a4_fatal(console: &mut Console, reason: &core::fmt::Arguments<'_>) -> ! {
 fn a5_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "A5: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn a6_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "A6: SELFTEST FAILED - halting CPU");
     halt()
 }
 

@@ -1,4 +1,4 @@
-# Arranque UEFI, consola, memoria y procesos (A2 + A3 + A4 + A5)
+# Arranque UEFI, consola, memoria, procesos e IPC (A2 + A3 + A4 + A5 + A6)
 
 A2 implementa el cargador mínimo de Meridian:
 
@@ -31,24 +31,39 @@ procesos con espacios de direcciones aislados:
   privada del otro y el intento provoca un **page fault controlado** recuperado
   por el kernel.
 
+A6 añade **IPC por puertos** y **capacidades simples** por proceso:
+
+- puertos del kernel con cola FIFO acotada de mensajes de tamaño fijo (sin
+  heap), identificados por un `PortId` y propiedad de un proceso lógico;
+- tabla de capacidades fija por proceso con slots/handles y derechos `READ`,
+  `WRITE`, `SEND` y `EXECUTE`;
+- toda operación IPC exige la capacidad y el derecho adecuados desde la tabla
+  del proceso que actúa; si faltan, devuelve un error explícito;
+- derivación/reducción monotónica de derechos (`derive`/`attenuate`): solo se
+  aceptan subconjuntos; cualquier ampliación se rechaza;
+- auto-pruebas de envío/recepción, acceso denegado y reducción sin ampliación.
+
 ## Estructura
 
 ```
 bootinfo/   contrato #[repr(C)] compartido entre bootloader y kernel
 bootloader/ aplicación UEFI: GOP + FAT + cargador ELF + handoff
-kernel/     bare-metal x86-64: consola, MM, CPU y procesos
-  src/main.rs         arranque, init GDT/IDT, pila propia, A3/A4/A5
+kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades e IPC
+  src/main.rs         arranque, init GDT/IDT, pila propia, A3/A4/A5/A6
   src/console.rs      UART 16550, cursor de texto y salida combinada
   src/framebuffer.rs  escritura lineal en GOP (RGB/BGR/bitmask) y fuente 8x8
   src/memory.rs       recorrido y resumen del mapa de memoria UEFI
   src/arch/x86_64/    GDT/TSS, IDT y recuperación de #PF controlado
-  src/proc/           auto-pruebas de procesos/aislamiento (A5)
+  src/proc/           bloque de proceso (id, PML4, tabla de capacidades) y A5
+  cap/mod.rs          derechos, capacidades y tabla de slots por proceso
+  ipc/mod.rs          puertos, colas de mensajes y operaciones con derechos
+  ipc/selftest.rs     pruebas A6 de send/recv, denegación y atenuación
   mm/mod.rs           reservas físicas y símbolos de sección del linker
   mm/buddy.rs         asignador buddy de páginas/bloques y contadores
   mm/paging.rs        tablas 4 niveles, W^X y espacios por proceso
   mm/selftest.rs      pruebas de buddy y W^X con marcadores A4
 tools/build.sh  compila y genera build/meridian.img
-tools/run.sh    arranca OVMF/QEMU y valida marcadores A3/A4/A5
+tools/run.sh    arranca OVMF/QEMU y valida marcadores A3/A4/A5/A6
 ```
 
 ## Construcción y ejecución
@@ -80,8 +95,8 @@ build/screen.png    la misma captura convertida con Pillow, si está disponible
 ```
 
 El script devuelve 0 cuando COM1 contiene `Meridian booting`, los marcadores de
-A4 y los marcadores de A5; si aparece cualquier `A4: ... FAIL` o `A5: ... FAIL`,
-o falta alguna prueba requerida, devuelve 1.
+A4, A5 y A6; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL` o
+`A6: ... FAIL`, o falta alguna prueba requerida, devuelve 1.
 
 ## Handoff
 
@@ -237,6 +252,73 @@ El manejo es **controlado**: no hay triple fault, reset ni cuelgue; el kernel
 continúa, reporta los fallos esperados y finaliza la prueba. Un `#PF` no
 esperado se reporta como fallo y detiene el sistema.
 
+## IPC por puertos y capacidades (A6)
+
+### Procesos, handles y tabla de capacidades
+
+`src/proc/mod.rs` define un `Process` mínimo con:
+
+- `id: ProcessId` (`u16`), identificador lógico;
+- `root: u64`, la raíz PML4 de su espacio de direcciones (A5);
+- `caps: CapTable`, la tabla de capacidades del proceso.
+
+La tabla (`cap/mod.rs`) es fija (`MAX_CAPS = 16`) y no usa `alloc`. Cada slot es
+un **handle**: o está vacío o contiene una `Capability { object, rights }`. El
+proceso nunca accede a un objeto por su id directo; presenta el índice de slot y
+el kernel resuelve la capacidad. `grant` inserta una capacidad y
+`check(slot, required)` devuelve `RightsDenied` si falta el derecho o `EmptySlot`
+si el handle no existe.
+
+Derechos definidos como bits:
+
+| Derecho | Bit | Operación IPC que lo exige |
+|---|---|---|
+| `READ` | 0 | `recv`: consumir un mensaje de la cola |
+| `WRITE` | 1 | `clear_queue`: modificar el estado del puerto |
+| `SEND` | 2 | `send`: encolar un mensaje |
+| `EXECUTE` | 3 | `invoke`: consultar/invocar el puerto |
+
+Los errores son valores (`CapError`/`IpcError`), nunca pánicos. Así un proceso sin
+capacidad recibe `IpcError::Capability(EmptySlot)` y uno con derechos
+insuficientes recibe `IpcError::Capability(RightsDenied)`.
+
+### Puertos y mensajes
+
+`ipc/mod.rs` mantiene una tabla global fija de `MAX_PORTS = 8` puertos. Cada
+puerto tiene:
+
+- un `PortId` (índice estable, compartido con `ObjectId`);
+- un `ProcessId` propietario (informativo);
+- una cola circular FIFO de `QUEUE_DEPTH = 4` mensajes.
+
+Un `Message` es `Copy`, determinista y acotado: `tag: u64`, longitud y payload de
+hasta `MESSAGE_MAX_BYTES = 32` bytes. `Message::with_bytes` rechaza payloads
+mayores. `send` copia el mensaje a la cola; `recv` lo extrae. Los errores
+`QueueFull`/`QueueEmpty`/`NoSuchPort`/`NoPorts` son explícitos. En A6 no se
+destruyen puertos para que una capacidad nunca apunte a un objeto reciclado.
+
+El estado global vive en un `UnsafeCell` con `unsafe impl Sync` documentado (el
+kernel es mono-CPU y arranca con interrupciones deshabilitadas), el mismo patrón
+que el buddy de A4.
+
+### Derivación y reducción monotónica
+
+`CapTable::derive(from, to, rights)` crea una capacidad nueva en `to` con el
+mismo objeto y un subconjunto de los derechos de `from`.
+`CapTable::attenuate(slot, rights)` reduce los derechos de un slot existente.
+Ambas comprueban `requested.is_subset_of(current)`; si se pide cualquier derecho
+no presente devuelven `CapError::RightsEscalation`. No existe ninguna operación
+que añada derechos. Derivar tampoco modifica la capacidad origen, y el slot
+destino debe estar vacío.
+
+### Prueba integrada
+
+`ipc/selftest.rs` crea dos procesos lógicos con PML4 propia (A5), un puerto
+propiedad de B y estas capacidades: A con todos los derechos y B solo con
+`READ`. Conmuta `CR3` al espacio del proceso que actúa, igual que la prueba de
+aislamiento, y verifica envío/recepción, denegación y atenuación. Se ejecuta
+después de A5 desde `kernel_main`.
+
 ## Verificación de A4
 
 `tools/run.sh` exige los marcadores de A4 y falla si aparece cualquier
@@ -277,6 +359,32 @@ Esto demuestra que:
 - el intento inválido produce `#PF` **capturado y recuperado** de forma
   controlada, y el kernel continúa su ejecución.
 
+## Verificación de A6
+
+`tools/run.sh` exige los marcadores de A6 y falla ante `A6: ... FAIL` o pruebas
+faltantes. La salida esperada por COM1 incluye:
+
+```
+A6: ipc port created (id=0, owner=B, A[0] rights=rwsx, B[0] rights=r---)
+A6: ipc send/recv test PASS (A root=0x... -> port 0 -> B root=0x..., tag=0x..., 16 bytes)
+A6: capability denied without rights PASS (B[0] rights=r---: send/clear/invoke -> RightsDenied, slot 9 -> EmptySlot)
+A6: capability reduction/attenuation PASS (slot0 rwsx -> slot1 r-s- derivado y luego atenuado a r---; EXECUTE ampliado rechazado, ampliacion in-place rechazada, origen intacto)
+A6: ipc/capabilities tests PASS (send/recv through port, denial without rights, monotonic attenuation)
+```
+
+Esto demuestra los tres criterios:
+
+1. **Envío por puerto:** A, ejecutando con su PML4 y su tabla de capacidades,
+   envía un mensaje con tag y payload conocidos; B lo recibe íntegro desde la
+   cola del mismo puerto.
+2. **Error sin capacidad:** B solo tiene `READ`, así que `send`, `clear_queue` e
+   `invoke` devuelven `RightsDenied`; usar un slot vacío devuelve `EmptySlot`.
+   No hay pánico ni éxito silencioso.
+3. **Reducción sin ampliación:** se deriva una capacidad `r-s-` desde `rwsx`, se
+   usa para enviar y luego se atenúa a `r---`. Derivar añadiendo `EXECUTE` o
+   atenuar a `rwsx` se rechaza con `RightsEscalation`, y la capacidad origen
+   permanece `rwsx`.
+
 ## Verificación de la consola
 
 Serie (`build/serial.log`): el kernel escribe el título y un resumen de
@@ -297,17 +405,24 @@ meridian: pantalla GOP dibujada
 meridian: ExitBootServices completado, saltando al kernel
 ```
 
-## Limitaciones / pendientes para A6
+## Limitaciones / pendientes para A7
 
 - No hay scheduler, contexto de ejecución en user mode (ring 3) ni syscalls;
-  los "procesos" de A5 son espacios de direcciones de prueba ejercitados desde
-  el kernel (conmutación de CR3 + acceso/fallo controlado), no hilos de usuario
-  independientes.
-- No existe estructura de proceso completa (PCB), carga de ELF de usuario ni
-  gestión de ciclo de vida/recursos más allá de la prueba.
+  los "procesos" de A5/A6 son estructuras lógicas con PML4 y tabla de
+  capacidades ejercitadas desde el kernel con conmutación de `CR3`, no hilos de
+  usuario independientes.
+- La tabla de procesos no es global: las auto-pruebas mantienen los `Process`
+  en la pila del kernel. A7 debería introducir un registro de procesos,
+  planificación y bloqueo/desbloqueo en `send`/`recv`.
+- No existe PCB completo, carga de ELF de usuario ni ciclo de vida/recursos
+  (cierre de puertos, revocación de capacidades, herencia entre procesos).
+- `send`/`recv` son no bloqueantes (devuelven `QueueFull`/`QueueEmpty`); no hay
+  espera ni notificación.
+- Los puertos no se destruyen ni se reciclan; faltan generaciones/refcounts
+  para invalidar capacidades obsoletas con seguridad.
 - Las tablas clonadas para espacios de proceso y algunas páginas de tablas no
   se liberan de forma exhaustiva (no hay recorrido/ownership completo de page
-  tables ni heap); se liberan las páginas de datos privadas de la prueba.
+  tables ni heap); en A6 tampoco se liberan los PML4 de los procesos de prueba.
 - Las páginas de tabla permanecen RW+NX; no se protegen como solo lectura.
 - El espacio es identidad en `0..4 GiB` (sin higher-half kernel separado ni
   layout usuario/kernel definitivo).
