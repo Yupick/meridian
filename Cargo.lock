@@ -43,6 +43,7 @@ dependencies = [
  "font8x8",
  "log",
  "meridian-bootinfo",
+ "meridian-crypto",
  "uefi",
 ]
 

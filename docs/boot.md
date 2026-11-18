@@ -1,4 +1,4 @@
-# Arranque UEFI, consola, memoria, procesos, IPC, FS RAM, login, terminal y QA Alpha (A2–A10)
+# Arranque UEFI, consola, memoria, procesos, IPC, FS RAM, login, terminal, QA Alpha (A2–A10) y firma de kernel (T1.1)
 
 A2 implementa el cargador mínimo de Meridian:
 
@@ -91,11 +91,24 @@ documentación de uso:
 - `docs/alpha.md` describe entorno, construcción, arranque, comandos de la
   terminal, solución de problemas y criterios de cierre de la Alpha.
 
+T1.1 (Fase 1) añade la **verificación Ed25519 de la imagen del kernel en el
+bootloader**:
+
+- `tools/build.sh` firma el contenido íntegro de `build/kernel.elf` con
+  Ed25519 y genera `build/kernel.sig` (64 bytes en bruto), que copia a la ESP
+  como `\kernel.sig` junto a `kernel.elf`;
+- el bootloader lee `\kernel.sig` y verifica la firma con una clave pública
+  embebida; si es inválida o ausente aborta con `SECURITY_VIOLATION` antes de
+  cargar el ELF y de llamar a `exit_boot_services`;
+- `tools/run.sh` exige el marcador `meridian: firma de kernel verificada` en
+  el debugcon durante el arranque normal, y `tests/run-signature.sh` valida el
+  rechazo de una firma corrupta.
+
 ## Estructura
 
 ```
 bootinfo/   contrato #[repr(C)] compartido entre bootloader y kernel
-bootloader/ aplicación UEFI: GOP + FAT + cargador ELF + handoff
+bootloader/ aplicación UEFI: GOP + FAT + verificación de firma + cargador ELF + handoff
 kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades, IPC, FS, auth y term
   src/main.rs         arranque, init GDT/IDT, pila propia, A3–A9
   src/console.rs      UART 16550, cursor de texto, limpieza y salida combinada
@@ -119,9 +132,10 @@ services/auth/  servicio de login y usuarios (A8, alpha)
 services/term/  terminal/shell alpha (A9)
   mod.rs              intérprete de comandos sobre sesión/capacidades y cwd
   selftest.rs         pruebas scriptadas A9 de comandos y control de acceso
-tools/build.sh  compila y genera build/meridian.img
-tools/run.sh    arranca OVMF/QEMU y valida marcadores A3–A9
+tools/build.sh  compila, firma el kernel (Ed25519) y genera build/meridian.img
+tools/run.sh    arranca OVMF/QEMU y valida firma + marcadores A3–A9
 tests/run-alpha.sh  QA A10: build + QEMU + login/comandos A9 en un solo comando
+tests/run-signature.sh  QA T1.1: firma corrupta en la ESP rechazada por el bootloader
 docs/alpha.md   guía de Alpha: construir, ejecutar y usar la terminal
 ```
 
@@ -150,8 +164,11 @@ Ver `docs/alpha.md` para la guía completa.
 ```
 build/bootloader.efi
 build/kernel.elf
+build/kernel.sig     # firma Ed25519 de kernel.elf (64 bytes en bruto)
 build/meridian.img   # GPT + ESP FAT32 de 64 MiB
 ```
+
+La ESP de la imagen contiene además `\kernel.sig` junto a `\kernel.elf`.
 
 `tools/run.sh` arranca QEMU con OVMF sin ventana, espera al kernel por COM1 y
 guarda:
@@ -163,10 +180,13 @@ build/screen.ppm    captura GOP (screendump)
 build/screen.png    la misma captura convertida con Pillow, si está disponible
 ```
 
-El script devuelve 0 cuando COM1 contiene `Meridian booting`, los marcadores de
-A4, A5, A6, A7, A8 y A9; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL`,
-`A6: ... FAIL`, `A7: ... FAIL`, `A8: ... FAIL` o `A9: ... FAIL`, o falta
-alguna prueba requerida, devuelve 1.
+El script devuelve 0 cuando el debugcon contiene
+`meridian: firma de kernel verificada` y COM1 contiene `Meridian booting`, los
+marcadores de A4, A5, A6, A7, A8 y A9; si aparece cualquier `A4: ... FAIL`,
+`A5: ... FAIL`, `A6: ... FAIL`, `A7: ... FAIL`, `A8: ... FAIL` o
+`A9: ... FAIL`, o falta alguna prueba requerida, devuelve 1. En modo
+`--expect-signature-reject` exige en cambio el rechazo de la firma y que no
+aparezca `Meridian booting` (ver T1.1 más abajo).
 
 ## Handoff
 
@@ -562,6 +582,67 @@ Los logs quedan en `build/alpha-build.log` y `build/alpha-run.log`; la guía
 operativa está en `docs/alpha.md`. Con esto se cierran los criterios de
 aceptación de A10 y de la Fase 0.
 
+## Verificación de firma del kernel (T1.1)
+
+`tools/build.sh` firma la imagen del kernel con Ed25519 mediante el ejemplo
+`sign-kernel` de `meridian-crypto` y escribe el resultado en `build/kernel.sig`
+(64 bytes en bruto), que copia a la ESP como `\kernel.sig` junto a
+`\kernel.elf`. La firma cubre el contenido íntegro de `\kernel.elf`.
+
+El orden en el arranque del bootloader es:
+
+1. leer `\kernel.elf` y `\kernel.sig` de la ESP;
+2. verificar la firma Ed25519 con la clave pública embebida
+   (`bootloader/src/signature.rs`);
+3. solo si la verificación pasa, cargar los segmentos `PT_LOAD` del ELF;
+4. más adelante, salir de boot services (`exit_boot_services`) y entregar
+   `BootInfo` al kernel.
+
+Si `\kernel.sig` falta, está vacío, no tiene exactamente 64 bytes o la firma
+no corresponde al kernel y a la clave pública embebida, el bootloader aborta
+con `SECURITY_VIOLATION` **antes** de cargar el ELF y de llamar a
+`exit_boot_services`: el kernel nunca se ejecuta y no aparece
+`Meridian booting`.
+
+Marcadores de debugcon (`build/debugcon.log`, puerto 0xE9):
+
+```
+meridian: firma de kernel verificada
+meridian: firma de kernel inválida; abortando
+meridian: firma de kernel ausente; abortando
+```
+
+`tools/run.sh` exige el primero en el arranque normal. En modo
+`--expect-signature-reject` exige uno de los dos marcadores de rechazo, que no
+aparezca `Meridian booting` en COM1 y que tampoco se haya verificado la firma.
+
+### Clave de firma
+
+- Por defecto (desarrollo) se usa una clave fija derivada del vector de prueba
+  **RFC 8032 TEST 1**. Es un vector público, no un secreto, y **solo es apta
+  para desarrollo**; `tools/build.sh` avisa cuando la usa.
+- En producción se define `MERIDIAN_KERNEL_SIGNING_KEY` al ejecutar
+  `tools/build.sh`, con la clave privada Ed25519 en hexadecimal de 64 bytes
+  (128 caracteres). La clave pública embebida en el bootloader debe coincidir
+  con la privada usada; puede derivarse con
+  `cargo run -p meridian-crypto --example sign-kernel -- --public-key <hex>`.
+- Esto **no es Secure Boot de firmware**: no interviene el UEFI del arranque
+  ni hay cadena de confianza del firmware; la verificación la hace
+  únicamente el bootloader de Meridian sobre el contenido de la ESP.
+
+### QA de la firma
+
+```bash
+tests/run-signature.sh
+```
+
+El script construye una imagen aislada en `build-signature-test` (no toca
+`build/`), corrompe `\kernel.sig` dentro de la ESP (altera un bit de la firma)
+y arranca QEMU con `tools/run.sh --expect-signature-reject`. El QA pasa solo si
+el bootloader aborta con un marcador de rechazo y en COM1 **no** aparece
+`Meridian booting`; sale con código `0` y muestra
+`[OK] T1.1 firma inválida rechazada`.
+
 ## Verificación de la consola
 
 Serie (`build/serial.log`): el kernel escribe el título y un resumen de
@@ -578,6 +659,7 @@ diagnóstico en texto 8x8.
 `build/debugcon.log` debe contener las trazas del bootloader:
 
 ```
+meridian: firma de kernel verificada
 meridian: pantalla GOP dibujada
 meridian: ExitBootServices completado, saltando al kernel
 ```
@@ -614,3 +696,7 @@ meridian: ExitBootServices completado, saltando al kernel
 - Buddy limitado a 1 GiB físico gestionado y mapeo a 0..4 GiB.
 - La consola escribe directamente en el framebuffer físico sin scroll.
 - Imagen/kernel enlazados a dirección física fija; imagen FAT GPT sencilla.
+- La verificación de firma (T1.1) es interna del bootloader: por defecto usa
+  una clave de desarrollo pública (RFC 8032 TEST 1), la clave pública está
+  embebida sin rotación y no hay Secure Boot de firmware ni cadena de
+  confianza del arranque UEFI.
