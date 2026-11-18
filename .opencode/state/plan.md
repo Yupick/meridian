@@ -209,7 +209,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #14 mergeado en develop, commit 71fab07)
 
 ### A10 — Pruebas y cierre de alpha
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** media
 - **Asignado:** QA (pruebas) + Docs (guía de uso)
 - **Dependencias:** A9
@@ -217,7 +217,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - `tests/run-alpha.sh` ejecuta login y todos los comandos de A9 y termina con código 0.
   - `docs/alpha.md` describe cómo construir, ejecutar y usar la terminal.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #15 mergeado en develop, commit ae57c85)
 
 ---
 
