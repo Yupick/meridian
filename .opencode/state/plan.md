@@ -177,7 +177,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #12 mergeado en develop, commit 2aa0f1c)
 
 ### A8 — Servicio de login y usuarios
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend (servicio) + Frontend (pantalla de login)
 - **Dependencias:** A6, A7
@@ -185,7 +185,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - Login correcto abre la sesión; contraseña incorrecta se rechaza sin revelar si el usuario existe.
   - Tras login, el usuario tiene capacidades sobre su directorio personal.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #13 mergeado en develop, commit b4bd33b)
 
 ### A9 — Terminal alpha
 - **Estado:** pending
