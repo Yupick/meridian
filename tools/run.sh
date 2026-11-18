@@ -25,10 +25,14 @@
 #   A9: command script PASS
 #   A9: rmdir non-empty shows clear error PASS
 #   A9: terminal tests PASS
+# El debugcon del bootloader también debe contener:
+#   meridian: firma de kernel verificada
+# En modo --expect-signature-reject se exige en cambio el rechazo y ausencia de
+# "Meridian booting" en COM1.
 # Cualquier marcador "A4/A5/A6/A7/A8/A9 ... FAIL" hace fallar el script.
 #
 # Uso:
-#   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot]
+#   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot] [--expect-signature-reject]
 #
 # Variables:
 #   MERIDIAN_TIMEOUT        timeout total en segundos (por defecto 45)
@@ -45,6 +49,7 @@ TIMEOUT="${MERIDIAN_TIMEOUT:-45}"
 QEMU_DISPLAY="${MERIDIAN_QEMU_DISPLAY:-none}"
 MEMORY="${MERIDIAN_MEMORY:-512M}"
 TAKE_SCREENSHOT=1
+EXPECT_SIGNATURE_REJECT=0
 
 SERIAL_LOG="$BUILD_DIR/serial.log"
 DEBUG_LOG="$BUILD_DIR/debugcon.log"
@@ -66,6 +71,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-screenshot)
             TAKE_SCREENSHOT=0
+            shift
+            ;;
+        --expect-signature-reject)
+            EXPECT_SIGNATURE_REJECT=1
             shift
             ;;
         -h|--help)
@@ -143,6 +152,8 @@ QEMU_PID=$!
 log "QEMU PID $QEMU_PID; esperando al kernel en COM1..."
 
 deadline=$((SECONDS + TIMEOUT))
+signature_ok=0
+signature_reject_ok=0
 boot_ok=0
 buddy_ok=0
 wx_ok=0
@@ -195,11 +206,24 @@ while (( SECONDS < deadline )); do
             break
         fi
     fi
-    if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok \
-          && a6_ipc_ok && a6_denied_ok && a6_reduce_ok && a6_summary_ok \
-          && a7_ops_ok && a7_ro_ok && a7_summary_ok \
-          && a8_screen_ok && a8_reject_ok && a8_caps_ok && a8_summary_ok \
-          && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok )); then
+    if [[ -f "$DEBUG_LOG" ]]; then
+        if grep -q "meridian: firma de kernel verificada" "$DEBUG_LOG"; then
+            signature_ok=1
+        fi
+        if grep -Eq "meridian: firma de kernel (inválida|ausente); abortando" "$DEBUG_LOG"; then
+            signature_reject_ok=1
+        fi
+    fi
+    if (( EXPECT_SIGNATURE_REJECT )); then
+        if (( signature_reject_ok )); then
+            break
+        fi
+    elif (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok \
+            && a6_ipc_ok && a6_denied_ok && a6_reduce_ok && a6_summary_ok \
+            && a7_ops_ok && a7_ro_ok && a7_summary_ok \
+            && a8_screen_ok && a8_reject_ok && a8_caps_ok && a8_summary_ok \
+            && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok \
+            && signature_ok )); then
         break
     fi
     sleep 0.5
@@ -252,12 +276,27 @@ if (( fail_marker )); then
     log "FALLO: el kernel reportó un marcador 'A4/A5/A6/A7/A8/A9 ... FAIL' (ver COM1)."
     exit 1
 fi
-if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok \
+
+if (( EXPECT_SIGNATURE_REJECT )); then
+    if (( signature_reject_ok && !boot_ok && !signature_ok )); then
+        log "OK: bootloader rechazó la firma inválida y el kernel no arrancó."
+        exit 0
+    fi
+    log "FALLO: se esperaba rechazo de firma (reject=$signature_reject_ok, boot=$boot_ok, firma_ok=$signature_ok)."
+    if [[ -s "$QEMU_LOG" ]]; then
+        log "--- log de QEMU ---"
+        cat "$QEMU_LOG"
+    fi
+    exit 1
+fi
+
+if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
+      && a5_create_ok && a5_isolation_ok \
       && a6_ipc_ok && a6_denied_ok && a6_reduce_ok && a6_summary_ok \
       && a7_ops_ok && a7_ro_ok && a7_summary_ok \
       && a8_screen_ok && a8_reject_ok && a8_caps_ok && a8_summary_ok \
       && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok )); then
-    log "OK: kernel arrancó ('Meridian booting'), pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios) y A9 (terminal alpha) por COM1."
+    log "OK: firma verificada; kernel arrancó ('Meridian booting') y pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios) y A9 (terminal alpha) por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -268,7 +307,7 @@ if (( boot_ok && buddy_ok && wx_ok && a5_create_ok && a5_isolation_ok \
     exit 0
 fi
 
-log "FALLO: marcadores pendientes (boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok)."
+log "FALLO: marcadores pendientes (firma=$signature_ok, reject=$signature_reject_ok, boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok)."
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"

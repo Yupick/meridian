@@ -8,10 +8,13 @@
 #   build/meridian.img          imagen GPT con ESP FAT32:
 #                                 EFI/BOOT/BOOTX64.EFI
 #                                 kernel.elf
+#                                 kernel.sig
 #
 # Variables:
-#   MERIDIAN_BUILD_DIR  directorio de salida (por defecto: <repo>/build)
-#   CARGO_PROFILE       dev|release (por defecto: release)
+#   MERIDIAN_BUILD_DIR          directorio de salida (por defecto: <repo>/build)
+#   CARGO_PROFILE               dev|release (por defecto: release)
+#   MERIDIAN_KERNEL_SIGNING_KEY clave Ed25519 privada en hexadecimal (64 bytes).
+#                               Si no se define se usa una clave de desarrollo.
 
 set -euo pipefail
 
@@ -25,6 +28,7 @@ IMAGE="$BUILD_DIR/meridian.img"
 PART_IMAGE="$BUILD_DIR/esp-part.img"
 BOOTLOADER_EFI="$BUILD_DIR/bootloader.efi"
 KERNEL_ELF="$BUILD_DIR/kernel.elf"
+KERNEL_SIG="$BUILD_DIR/kernel.sig"
 
 # Imagen de 96 MiB; la ESP empieza en el sector 2048 (1 MiB) y ocupa 64 MiB.
 # Se deja el resto libre para la GPT de respaldo y futuras particiones.
@@ -83,6 +87,20 @@ mkdir -p "$BUILD_DIR"
 cp "$BOOTLOADER_BUILT" "$BOOTLOADER_EFI"
 cp "$KERNEL_BUILT" "$KERNEL_ELF"
 
+log "firmando kernel con Ed25519"
+SIGN_ARGS=("$KERNEL_ELF" "$KERNEL_SIG")
+if [[ -n "${MERIDIAN_KERNEL_SIGNING_KEY:-}" ]]; then
+    SIGN_ARGS+=("$MERIDIAN_KERNEL_SIGNING_KEY")
+else
+    log "AVISO: usando clave de firma de desarrollo (define MERIDIAN_KERNEL_SIGNING_KEY en producción)"
+fi
+cargo run \
+    --manifest-path "$ROOT/Cargo.toml" \
+    "${CARGO_FLAGS[@]}" \
+    -p meridian-crypto \
+    --example sign-kernel \
+    -- "${SIGN_ARGS[@]}"
+
 log "creando imagen GPT de ${IMAGE_SIZE_MB} MiB"
 rm -f "$IMAGE" "$PART_IMAGE"
 dd if=/dev/zero of="$IMAGE" bs=1M count="$IMAGE_SIZE_MB" status=none
@@ -100,14 +118,16 @@ mkfs.fat -F 32 -n MERIDIAN "$PART_IMAGE" >/dev/null
 mmd -i "$PART_IMAGE" ::/EFI ::/EFI/BOOT
 mcopy -i "$PART_IMAGE" "$BOOTLOADER_EFI" ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$PART_IMAGE" "$KERNEL_ELF" ::/kernel.elf
+mcopy -i "$PART_IMAGE" "$KERNEL_SIG" ::/kernel.sig
 
 # Comprobación de la estructura FAT generada (antes de insertarla en la GPT).
 if ! mdir -i "$PART_IMAGE" ::/EFI/BOOT/BOOTX64.EFI >/dev/null 2>&1 ||
-   ! mdir -i "$PART_IMAGE" ::/kernel.elf >/dev/null 2>&1; then
+   ! mdir -i "$PART_IMAGE" ::/kernel.elf >/dev/null 2>&1 ||
+   ! mdir -i "$PART_IMAGE" ::/kernel.sig >/dev/null 2>&1; then
     log "contenido de la ESP:"
     mdir -i "$PART_IMAGE" -/ ::/ || true
     rm -f "$PART_IMAGE"
-    fail "la imagen FAT no contiene EFI/BOOT/BOOTX64.EFI y kernel.elf"
+    fail "la imagen FAT no contiene EFI/BOOT/BOOTX64.EFI, kernel.elf y kernel.sig"
 fi
 
 log "insertando la ESP en la imagen GPT (offset $((PART_START_SECTOR * 512)) bytes)"
@@ -117,4 +137,5 @@ rm -f "$PART_IMAGE"
 log "imagen lista: $IMAGE"
 printf '       bootloader: %s (%s bytes)\n' "$BOOTLOADER_EFI" "$(stat -c %s "$BOOTLOADER_EFI")"
 printf '       kernel:     %s (%s bytes)\n' "$KERNEL_ELF" "$(stat -c %s "$KERNEL_ELF")"
+printf '       firma:      %s (%s bytes)\n' "$KERNEL_SIG" "$(stat -c %s "$KERNEL_SIG")"
 printf '       imagen:     %s (%s bytes)\n' "$IMAGE" "$(stat -c %s "$IMAGE")"

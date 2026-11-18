@@ -11,6 +11,10 @@ Fase 0 (Alpha) completada: arranque UEFI, consola, memoria, procesos, IPC,
 sistema de archivos RAM, login y terminal scriptada verificados en QEMU con
 `tests/run-alpha.sh`. Ver `docs/alpha.md`.
 
+T1.1 (Fase 1): el bootloader verifica la firma Ed25519 de `\kernel.elf` antes
+de cargarlo y aborta con `SECURITY_VIOLATION` si es inválida o ausente; QA con
+`tests/run-signature.sh`. Ver `docs/boot.md`.
+
 ## Arranque rápido (Alpha)
 
 ```bash

@@ -3,9 +3,11 @@
 //! Flujo:
 //! 1. Inicializa los helpers de `uefi` (allocator, logger, panic handler).
 //! 2. Localiza un dispositivo GOP y dibuja un mensaje directamente en pantalla.
-//! 3. Abre el sistema de archivos de la imagen FAT y lee `\kernel.elf`.
-//! 4. Carga los segmentos `PT_LOAD` del ELF en `KERNEL_LOAD_BASE`.
-//! 5. Captura el mapa de memoria final saliendo de boot services y entrega
+//! 3. Abre el sistema de archivos de la imagen FAT y lee `\kernel.elf` y
+//!    `\kernel.sig`.
+//! 4. Verifica la firma Ed25519 del kernel con la clave embebida (T1.1).
+//! 5. Carga los segmentos `PT_LOAD` del ELF en `KERNEL_LOAD_BASE`.
+//! 6. Captura el mapa de memoria final saliendo de boot services y entrega
 //!    `BootInfo` al kernel.
 //!
 //! El kernel es el responsable de la consola a partir del handoff (A3).
@@ -17,6 +19,7 @@ extern crate alloc;
 
 mod display;
 mod elf;
+mod signature;
 
 use alloc::format;
 use core::time::Duration;
@@ -68,26 +71,60 @@ fn run() -> uefi::Result<()> {
     drop(gop_handles);
     log::info!("GOP localizado ({} handle(s) disponibles)", 1);
 
-    // --- Sistema de archivos de la ESP/FAT y kernel -----------------------
-    let kernel_data = {
+    // --- Sistema de archivos de la ESP/FAT, kernel y firma ----------------
+    let (kernel_data, signature_data) = {
         let fs_proto = boot::get_image_file_system(boot::image_handle())?;
         let mut fs = FileSystem::new(fs_proto);
 
-        let exists = fs.try_exists(cstr16!("\\kernel.elf")).map_err(|err| {
-            log::error!("error consultando \\kernel.elf: {err:?}");
-            uefi::Error::from(Status::LOAD_ERROR)
-        })?;
-        if !exists {
-            log::error!("\\kernel.elf no existe en la imagen FAT");
-            return Err(Status::NOT_FOUND.into());
-        }
+        let kernel_data = {
+            let exists = fs.try_exists(cstr16!("\\kernel.elf")).map_err(|err| {
+                log::error!("error consultando \\kernel.elf: {err:?}");
+                uefi::Error::from(Status::LOAD_ERROR)
+            })?;
+            if !exists {
+                log::error!("\\kernel.elf no existe en la imagen FAT");
+                return Err(Status::NOT_FOUND.into());
+            }
 
-        fs.read(cstr16!("\\kernel.elf")).map_err(|err| {
-            log::error!("no se pudo leer \\kernel.elf: {err:?}");
-            uefi::Error::from(Status::LOAD_ERROR)
-        })?
+            fs.read(cstr16!("\\kernel.elf")).map_err(|err| {
+                log::error!("no se pudo leer \\kernel.elf: {err:?}");
+                uefi::Error::from(Status::LOAD_ERROR)
+            })?
+        };
+
+        let signature_data = {
+            let exists = fs.try_exists(cstr16!("\\kernel.sig")).map_err(|err| {
+                log::error!("error consultando \\kernel.sig: {err:?}");
+                uefi::Error::from(Status::SECURITY_VIOLATION)
+            })?;
+            if !exists {
+                log::error!("\\kernel.sig no existe en la imagen FAT");
+                debugcon("meridian: firma de kernel ausente; abortando\r\n");
+                return Err(Status::SECURITY_VIOLATION.into());
+            }
+
+            fs.read(cstr16!("\\kernel.sig")).map_err(|err| {
+                log::error!("no se pudo leer \\kernel.sig: {err:?}");
+                uefi::Error::from(Status::SECURITY_VIOLATION)
+            })?
+        };
+
+        (kernel_data, signature_data)
     };
     log::info!("\\kernel.elf leído ({} bytes)", kernel_data.len());
+    log::info!("\\kernel.sig leído ({} bytes)", signature_data.len());
+    log::info!(
+        "verificando firma Ed25519 con {}",
+        signature::KERNEL_SIGNATURE_PATH
+    );
+
+    signature::verify_kernel_signature(&kernel_data, &signature_data).map_err(|err| {
+        log::error!("verificación de firma fallida: {err}");
+        debugcon("meridian: firma de kernel inválida; abortando\r\n");
+        uefi::Error::from(Status::SECURITY_VIOLATION)
+    })?;
+    debugcon("meridian: firma de kernel verificada\r\n");
+    drop(signature_data);
 
     let kernel = elf::load(&kernel_data).map_err(|err| {
         log::error!("ELF inválido: {err}");

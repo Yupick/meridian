@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 meridian-bootinfo = { path = "../bootinfo" }
+meridian-crypto = { path = "../crypto" }
 uefi = { version = "0.41", features = [
     "alloc",
     "global_allocator",

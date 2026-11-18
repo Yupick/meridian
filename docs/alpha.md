@@ -18,6 +18,11 @@ La Alpha incluye:
 - terminal alpha que exige login y ejecuta comandos scriptados (A9);
 - QA de integración en un único comando y esta guía (A10).
 
+Además, desde T1.1 (Fase 1, ver `docs/boot.md`), `tools/build.sh` firma el
+kernel con Ed25519 (`build/kernel.sig`, copiado a la ESP como `\kernel.sig`) y
+el bootloader verifica esa firma antes de cargar el ELF; esta guía refleja ese
+comportamiento en construcción, arranque y QA.
+
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
 auto-pruebas scriptadas durante el arranque**. Esto se documenta en detalle en
@@ -44,6 +49,7 @@ Variables opcionales:
 | `MERIDIAN_MEMORY` | memoria de la VM | `512M` |
 | `MERIDIAN_QEMU_DISPLAY` | opción `-display` de QEMU | `none` |
 | `CARGO_PROFILE` | perfil de Cargo | `release` |
+| `MERIDIAN_KERNEL_SIGNING_KEY` | clave privada Ed25519 (hex, 64 bytes) con la que se firma `kernel.elf` | clave de desarrollo (solo desarrollo) |
 
 ## 3. Construcción
 
@@ -56,8 +62,15 @@ Genera:
 ```
 build/bootloader.efi     # aplicación UEFI
 build/kernel.elf         # kernel bare-metal
-build/meridian.img       # GPT + ESP FAT32 con EFI/BOOT/BOOTX64.EFI y kernel.elf
+build/kernel.sig         # firma Ed25519 de kernel.elf (64 bytes en bruto)
+build/meridian.img       # GPT + ESP FAT32 con EFI/BOOT/BOOTX64.EFI, kernel.elf y kernel.sig
 ```
+
+La firma se calcula sobre el contenido íntegro de `kernel.elf` con la clave
+privada de `MERIDIAN_KERNEL_SIGNING_KEY` o, si no está definida, con la clave
+de desarrollo (RFC 8032 TEST 1, solo para desarrollo). El bootloader verifica
+`\kernel.sig` antes de cargar el ELF y aborta con `SECURITY_VIOLATION` si es
+inválida o ausente (T1.1, ver `docs/boot.md`).
 
 ## 4. Arranque
 
@@ -76,12 +89,14 @@ build/screen.ppm     # captura GOP
 build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
-Devuelve `0` cuando ve todos los marcadores `A4`–`A9` y devuelve `1` si falta
-alguno o aparece un marcador `FAIL`. Opciones útiles:
+Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`
+y COM1 contiene todos los marcadores `A4`–`A9`; devuelve `1` si falta alguno o
+aparece un marcador `FAIL`. Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
 tools/run.sh --no-screenshot
+tools/run.sh --expect-signature-reject   # exige rechazo de firma (QA T1.1)
 MERIDIAN_QEMU_DISPLAY=gtk tools/run.sh
 ```
 
@@ -113,6 +128,17 @@ tests/run-alpha.sh --no-screenshot
 ```
 
 Los logs completos quedan en `build/alpha-build.log` y `build/alpha-run.log`.
+
+QA adicional de la firma del kernel (T1.1, fuera del alcance de la Alpha):
+
+```bash
+tests/run-signature.sh
+```
+
+Construye una imagen aislada en `build-signature-test`, corrompe `\kernel.sig`
+dentro de la ESP y usa `tools/run.sh --expect-signature-reject`; pasa solo si
+el bootloader aborta con un marcador de rechazo y en COM1 **no** aparece
+`Meridian booting`. Ver `docs/boot.md`.
 
 ## 6. Uso de la terminal (demo scriptada)
 
@@ -184,6 +210,11 @@ la VM.
   usa directamente `tests/run-alpha.sh`.
 - **Falta un marcador:** abre `build/serial.log`; los mensajes `FAIL` indican
   qué auto-prueba falló. `build/qemu.log` contiene errores de QEMU.
+- **Falta el marcador de firma:** `build/debugcon.log` debe contener
+  `meridian: firma de kernel verificada`. Si aparece
+  `meridian: firma de kernel inválida; abortando` o
+  `meridian: firma de kernel ausente; abortando`, comprueba que `\kernel.sig`
+  corresponde a `\kernel.elf` y a la clave pública embebida en el bootloader.
 - **Timeout:** usa `MERIDIAN_TIMEOUT=90 tests/run-alpha.sh` en máquinas lentas.
 - **Pantalla en blanco en `screen.png`:** comprueba que el firmware encontró
   GOP en `build/debugcon.log` y que la resolución seleccionada es válida.
