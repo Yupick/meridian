@@ -1,4 +1,4 @@
-# Arranque UEFI, consola, memoria, procesos, IPC, FS RAM, login y terminal (A2–A9)
+# Arranque UEFI, consola, memoria, procesos, IPC, FS RAM, login, terminal y QA Alpha (A2–A10)
 
 A2 implementa el cargador mínimo de Meridian:
 
@@ -82,6 +82,15 @@ A9 añade una **terminal (shell) alpha** de texto, accesible solo tras login:
 - `rmdir` sobre un directorio no vacío muestra un error claro sin modificarlo;
 - cada comando se verifica con una prueba scriptada integrada en QEMU.
 
+A10 cierra la Fase 0 (Alpha) con **QA de integración en un único comando** y
+documentación de uso:
+
+- `tests/run-alpha.sh` construye la imagen, arranca QEMU/OVMF y exige los
+  marcadores de login (A8) y de todos los comandos de terminal (A9), además de
+  A4–A7; falla si aparece cualquier marcador `FAIL` o falta alguno;
+- `docs/alpha.md` describe entorno, construcción, arranque, comandos de la
+  terminal, solución de problemas y criterios de cierre de la Alpha.
+
 ## Estructura
 
 ```
@@ -112,6 +121,8 @@ services/term/  terminal/shell alpha (A9)
   selftest.rs         pruebas scriptadas A9 de comandos y control de acceso
 tools/build.sh  compila y genera build/meridian.img
 tools/run.sh    arranca OVMF/QEMU y valida marcadores A3–A9
+tests/run-alpha.sh  QA A10: build + QEMU + login/comandos A9 en un solo comando
+docs/alpha.md   guía de Alpha: construir, ejecutar y usar la terminal
 ```
 
 ## Construcción y ejecución
@@ -123,6 +134,16 @@ tools/check-env.sh
 tools/build.sh
 tools/run.sh
 ```
+
+La verificación completa de la Alpha se reduce a un comando:
+
+```bash
+tests/run-alpha.sh
+```
+
+Este script construye, arranca QEMU y comprueba login (A8) más todos los
+comandos de terminal (A9); devuelve `0` solo si pasan todas las comprobaciones.
+Ver `docs/alpha.md` para la guía completa.
 
 `tools/build.sh` genera:
 
@@ -524,6 +545,23 @@ Esto demuestra los criterios de aceptación:
 3. **Acceso controlado:** sin login no se accede a la terminal (acceso denegado
    explícito); la sesión de terminal se inicia solo tras autenticación.
 
+## Verificación de A10 (cierre de Alpha)
+
+`tests/run-alpha.sh` es el único comando de QA de la Fase 0. Internamente
+ejecuta `tools/build.sh` y `tools/run.sh`, y después exige 40 marcadores en
+`build/serial.log`, incluidos todos los comandos de A9 y el login de A8. Falla
+si falta cualquier marcador o si aparece `A4: ... FAIL`, ..., `A9: ... FAIL`.
+
+Salida esperada al finalizar correctamente:
+
+```
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (40/40 marcadores; 40 esperados)
+```
+
+Los logs quedan en `build/alpha-build.log` y `build/alpha-run.log`; la guía
+operativa está en `docs/alpha.md`. Con esto se cierran los criterios de
+aceptación de A10 y de la Fase 0.
+
 ## Verificación de la consola
 
 Serie (`build/serial.log`): el kernel escribe el título y un resumen de
@@ -544,7 +582,7 @@ meridian: pantalla GOP dibujada
 meridian: ExitBootServices completado, saltando al kernel
 ```
 
-## Limitaciones / pendientes para A10
+## Limitaciones / pendientes para Fase 1
 
 - La terminal y el login se ejercitan mediante auto-pruebas scriptadas en el
   arranque (no hay aún entrada interactiva real por teclado/serie ni REPL de
