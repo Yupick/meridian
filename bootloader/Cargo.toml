@@ -1,0 +1,21 @@
+[package]
+name = "meridian-bootloader"
+description = "Cargador UEFI de Meridian"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+meridian-bootinfo = { path = "../bootinfo" }
+uefi = { version = "0.41", features = [
+    "alloc",
+    "global_allocator",
+    "logger",
+    "log-debugcon",
+    "panic_handler",
+    "qemu",
+] }
+log = "0.4"
+# Fuente bitmap 8x8 de dominio público para dibujar directamente sobre GOP.
+font8x8 = { version = "0.3", default-features = false, features = ["unicode"] }

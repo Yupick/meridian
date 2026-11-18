@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (tarea A2).
+#
+# Por defecto se ejecuta sin ventana (`-display none`), guarda la salida serie,
+# el debugcon y una captura de pantalla (`screendump`) para poder verificar el
+# mensaje dibujado vía GOP. El proceso termina automáticamente y devuelve 0 si
+# el kernel confirma por COM1 que recibió BootInfo.
+#
+# Uso:
+#   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot]
+#
+# Variables:
+#   MERIDIAN_TIMEOUT        timeout total en segundos (por defecto 45)
+#   MERIDIAN_QEMU_DISPLAY   -display de QEMU (por defecto "none")
+#   MERIDIAN_MEMORY         memoria de la VM (por defecto "512M")
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD_DIR="${MERIDIAN_BUILD_DIR:-$ROOT/build}"
+IMAGE="$BUILD_DIR/meridian.img"
+
+TIMEOUT="${MERIDIAN_TIMEOUT:-45}"
+QEMU_DISPLAY="${MERIDIAN_QEMU_DISPLAY:-none}"
+MEMORY="${MERIDIAN_MEMORY:-512M}"
+TAKE_SCREENSHOT=1
+
+SERIAL_LOG="$BUILD_DIR/serial.log"
+DEBUG_LOG="$BUILD_DIR/debugcon.log"
+QEMU_LOG="$BUILD_DIR/qemu.log"
+MONITOR="$BUILD_DIR/qemu-monitor.sock"
+SCREEN_PPM="$BUILD_DIR/screen.ppm"
+SCREEN_PNG="$BUILD_DIR/screen.png"
+OVMF_VARS="$BUILD_DIR/OVMF_VARS_4M.fd"
+
+log()  { printf '[run] %s\n' "$*"; }
+fail() { printf '[run] ERROR: %s\n' "$*" >&2; exit 1; }
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --timeout)
+            [[ $# -ge 2 ]] || fail "--timeout requiere un valor"
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        --no-screenshot)
+            TAKE_SCREENSHOT=0
+            shift
+            ;;
+        -h|--help)
+            sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            fail "opción desconocida: $1"
+            ;;
+    esac
+done
+
+command -v qemu-system-x86_64 >/dev/null 2>&1 || fail "qemu-system-x86_64 no está instalado"
+command -v socat >/dev/null 2>&1 || fail "socat no está instalado (necesario para el monitor QEMU)"
+[[ -f "$IMAGE" ]] || fail "no existe $IMAGE; ejecuta tools/build.sh primero"
+
+# Selección del firmware OVMF.
+OVMF_CODE=""
+OVMF_VARS_TEMPLATE=""
+for candidate in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+    if [[ -f "$candidate" ]]; then
+        OVMF_CODE="$candidate"
+        break
+    fi
+done
+for candidate in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd; do
+    if [[ -f "$candidate" ]]; then
+        OVMF_VARS_TEMPLATE="$candidate"
+        break
+    fi
+done
+[[ -n "$OVMF_CODE" ]] || fail "no se encontró OVMF_CODE en /usr/share/OVMF/"
+[[ -n "$OVMF_VARS_TEMPLATE" ]] || fail "no se encontró OVMF_VARS en /usr/share/OVMF/"
+
+mkdir -p "$BUILD_DIR"
+rm -f "$SERIAL_LOG" "$DEBUG_LOG" "$QEMU_LOG" "$MONITOR" "$SCREEN_PPM" "$SCREEN_PNG"
+cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+
+ACCEL=()
+if [[ -w /dev/kvm ]]; then
+    ACCEL=(-accel kvm)
+fi
+
+QEMU_PID=""
+cleanup() {
+    if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+log "firmware: $OVMF_CODE"
+log "imagen:   $IMAGE"
+log "timeout:  ${TIMEOUT}s"
+
+qemu-system-x86_64 \
+    -machine q35 \
+    -m "$MEMORY" \
+    "${ACCEL[@]}" \
+    -drive "if=pflash,format=raw,unit=0,readonly=on,file=$OVMF_CODE" \
+    -drive "if=pflash,format=raw,unit=1,file=$OVMF_VARS" \
+    -drive "file=$IMAGE,format=raw,if=virtio" \
+    -vga std \
+    -display "$QEMU_DISPLAY" \
+    -net none \
+    -no-reboot \
+    -serial "file:$SERIAL_LOG" \
+    -debugcon "file:$DEBUG_LOG" \
+    -monitor "unix:$MONITOR,server,nowait" \
+    -pidfile "$BUILD_DIR/qemu.pid" \
+    >"$QEMU_LOG" 2>&1 &
+QEMU_PID=$!
+
+log "QEMU PID $QEMU_PID; esperando al kernel en COM1..."
+
+deadline=$((SECONDS + TIMEOUT))
+success=0
+while (( SECONDS < deadline )); do
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+        log "QEMU terminó antes de tiempo"
+        break
+    fi
+    if [[ -f "$SERIAL_LOG" ]] && grep -q "MERIDIAN-KERNEL: entered" "$SERIAL_LOG"; then
+        success=1
+        break
+    fi
+    sleep 0.5
+done
+
+# Deja que el kernel termine de imprimir antes de capturar.
+sleep 1
+
+if (( TAKE_SCREENSHOT )) && [[ -S "$MONITOR" ]]; then
+    log "capturando pantalla GOP en $SCREEN_PPM"
+    if printf 'screendump %s\n' "$SCREEN_PPM" | socat - UNIX-CONNECT:"$MONITOR" >/dev/null 2>&1; then
+        if command -v python3 >/dev/null 2>&1 && python3 -c 'import PIL' >/dev/null 2>&1; then
+            python3 - "$SCREEN_PPM" "$SCREEN_PNG" <<'PY'
+import sys
+from PIL import Image
+Image.open(sys.argv[1]).save(sys.argv[2])
+PY
+            log "captura convertida a PNG: $SCREEN_PNG"
+        fi
+    else
+        log "AVISO: no se pudo ejecutar screendump"
+    fi
+fi
+
+if [[ -S "$MONITOR" ]]; then
+    printf 'quit\n' | socat - UNIX-CONNECT:"$MONITOR" >/dev/null 2>&1 || true
+fi
+
+wait "$QEMU_PID" 2>/dev/null || true
+QEMU_PID=""
+
+echo
+log "--- COM1 (kernel) ---"
+if [[ -s "$SERIAL_LOG" ]]; then
+    cat "$SERIAL_LOG"
+else
+    echo "(vacío)"
+fi
+
+echo
+log "--- debugcon (bootloader) ---"
+if [[ -s "$DEBUG_LOG" ]]; then
+    cat "$DEBUG_LOG"
+else
+    echo "(vacío)"
+fi
+
+echo
+if (( success )); then
+    log "OK: el kernel arrancó y recibió BootInfo."
+    if (( TAKE_SCREENSHOT )); then
+        if [[ -f "$SCREEN_PNG" ]]; then
+            log "Captura de pantalla GOP: $SCREEN_PNG"
+        elif [[ -f "$SCREEN_PPM" ]]; then
+            log "Captura de pantalla GOP: $SCREEN_PPM"
+        fi
+    fi
+    exit 0
+fi
+
+log "FALLO: no se observó 'MERIDIAN-KERNEL: entered' en COM1."
+if [[ -s "$QEMU_LOG" ]]; then
+    log "--- log de QEMU ---"
+    cat "$QEMU_LOG"
+fi
+exit 1

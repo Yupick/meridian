@@ -1,0 +1,26 @@
+# Workspace de Meridian.
+#
+# El bootloader y el kernel tienen targets distintos:
+#   - bootloader -> x86_64-unknown-uefi
+#   - kernel     -> x86_64-unknown-none
+# Por eso no se fija un target por defecto aquí; tools/build.sh pasa --target
+# de forma explícita.
+
+[workspace]
+resolver = "2"
+members = ["bootinfo", "bootloader", "kernel"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+rust-version = "1.91"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+lto = "thin"
+codegen-units = 1
