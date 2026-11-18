@@ -1,0 +1,11 @@
+[package]
+name = "meridian-kernel"
+description = "Microkernel de Meridian (stub de arranque A2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+meridian-bootinfo = { path = "../bootinfo" }
