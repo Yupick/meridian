@@ -166,7 +166,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #11 mergeado en develop, commit a93b9bb)
 
 ### A7 — Servicio de archivos mínimo
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend (servicio) + Db (modelo de objetos)
 - **Dependencias:** A6
@@ -174,7 +174,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - Pruebas unitarias de cada operación, incluido error al borrar un directorio no vacío.
   - Una capacidad de solo lectura no permite escribir.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #12 mergeado en develop, commit 2aa0f1c)
 
 ### A8 — Servicio de login y usuarios
 - **Estado:** pending
