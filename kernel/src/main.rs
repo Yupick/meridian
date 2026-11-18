@@ -1,12 +1,12 @@
-//! Kernel de Meridian — consola de arranque (tarea A3).
+//! Kernel de Meridian — consola de arranque (A3) y memoria física/virtual (A4).
 //!
 //! El bootloader entrega un `BootInfo` con el mapa de memoria UEFI final y la
 //! descripción del framebuffer GOP. El kernel valida la estructura, inicializa
-//! una consola que escribe simultáneamente por COM1 y por el framebuffer, y
-//! recorre el mapa de memoria para comprobar que puede consumirlo (la gestión
-//! completa de memoria llega en A4).
+//! la consola COM1+GOP, resume el mapa, construye el asignador buddy y las
+//! tablas de página propias con W^X, y ejecuta las auto-pruebas de A4.
 //!
-//! Mensaje de aceptación: `Meridian booting` debe aparecer en ambos canales.
+//! Mensajes de aceptación: `Meridian booting` (A3) y los marcadores
+//! `A4: buddy alloc/free tests PASS` / `A4: W^X check PASS` (A4).
 
 #![no_main]
 #![no_std]
@@ -14,14 +14,22 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
 
-use meridian_bootinfo::BootInfo;
+use meridian_bootinfo::{BootInfo, PAGE_SIZE};
 
 mod console;
 mod framebuffer;
 mod memory;
 
+// Los módulos de MM vivieron originalmente en `kernel/mm/` (había un
+// `.gitkeep` esperando esta tarea), fuera de `src/`; se reutiliza ese directorio
+// sin mover la estructura del crate.
+#[path = "../mm/mod.rs"]
+mod mm;
+
 use console::{Console, Serial, OK, TEXT, WARN};
 use memory::MemorySummary;
+use mm::buddy::{self, MAX_ORDER};
+use mm::{paging, selftest, Reservations};
 
 const KIB: u64 = 1024;
 
@@ -75,9 +83,57 @@ pub extern "sysv64" fn _start(boot_info: *const BootInfo) -> ! {
     print_kernel_image(&mut console, info);
 
     console.println("");
+
+    // --- A4: memoria física, paginación y W^X -----------------------------
+    let rsp: u64;
+    // SAFETY: solo se lee el puntero de pila; no se accede a memoria ni se
+    // modifica el estado de la CPU.
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nomem, nostack, preserves_flags));
+    }
+
+    let reservations = Reservations::new(info, boot_info as u64, rsp);
+    let summary = match buddy::init(&info.memory_map, &reservations.ranges) {
+        Ok(stats) => stats,
+        Err(err) => a4_fatal(&mut console, &format_args!("buddy init: {err}")),
+    };
+    let _ = writeln!(
+        console,
+        "A4: buddy init OK (orders 0..{MAX_ORDER}, {} free pages / {} MiB, {} reserved/skipped)",
+        summary.free_pages,
+        summary.free_pages * PAGE_SIZE / (1024 * 1024),
+        summary.skipped_pages
+    );
+    let _ = writeln!(
+        console,
+        "A4: reserved ({} ranges): low 1 MiB, kernel image, BootInfo, memory map, GOP framebuffer, firmware stack",
+        reservations.count
+    );
+
+    let root = match paging::init_and_switch(info, &reservations, boot_info as u64) {
+        Ok(root) => root,
+        Err(err) => a4_fatal(&mut console, &format_args!("paging init: {err}")),
+    };
+    let _ = writeln!(
+        console,
+        "A4: paging OK (PML4=0x{root:016X}, identity 0..4 GiB, 2 MiB default + 4 KiB per section)"
+    );
+
+    if !selftest::run(&mut console) {
+        a4_fatal(&mut console, &format_args!("auto-pruebas A4 fallidas"));
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
 
+    halt()
+}
+
+/// Informa de un fallo de A4 por consola (y por serie) y detiene la CPU.
+fn a4_fatal(console: &mut Console, reason: &core::fmt::Arguments<'_>) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "A4: INIT FAIL: {reason}");
+    let _ = writeln!(console, "A4: SELFTEST FAILED - halting CPU");
     halt()
 }
 
