@@ -110,7 +110,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #6 mergeado en develop, commit f22b8f9; instalación de paquetes/rust en el equipo de desarrollo confirmada por el usuario)
 
 ### A2 — Cargador UEFI mínimo
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A1
@@ -119,7 +119,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - `tools/build.sh` genera la imagen FAT.
   - `tools/run.sh` arranca la imagen en QEMU con OVMF sin errores.
   - Se muestra un mensaje en pantalla GOP.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #7 mergeado en develop, commit f603425)
 
 ### A3 — Consola del kernel
 - **Estado:** pending
