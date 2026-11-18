@@ -1,5 +1,5 @@
 //! Kernel de Meridian — consola (A3), memoria/paginación (A4), procesos
-//! aislados (A5) e IPC por puertos con capacidades (A6).
+//! aislados (A5), IPC/capacidades (A6) y servicio de archivos RAM (A7).
 
 #![no_main]
 #![no_std]
@@ -23,6 +23,9 @@ mod cap;
 mod ipc;
 #[path = "../mm/mod.rs"]
 mod mm;
+// Servicio de archivos en memoria (A7).
+#[path = "../../services/fs/mod.rs"]
+mod fs;
 
 use console::{Console, Serial, OK, TEXT, WARN};
 use memory::MemorySummary;
@@ -151,6 +154,12 @@ extern "sysv64" fn kernel_main() -> ! {
         a6_fatal(&mut console);
     }
 
+    // --- A7: servicio de archivos mínimo en RAM ---------------------------
+    console.println("");
+    if !fs::selftest::run(&mut console) {
+        a7_fatal(&mut console);
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
 
@@ -182,6 +191,12 @@ fn a5_fatal(console: &mut Console) -> ! {
 fn a6_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "A6: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn a7_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "A7: SELFTEST FAILED - halting CPU");
     halt()
 }
 
