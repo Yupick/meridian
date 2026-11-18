@@ -1,5 +1,6 @@
 //! Kernel de Meridian — consola (A3), memoria/paginación (A4), procesos
-//! aislados (A5), IPC/capacidades (A6) y servicio de archivos RAM (A7).
+//! aislados (A5), IPC/capacidades (A6), servicio de archivos RAM (A7)
+//! y login/usuarios (A8).
 
 #![no_main]
 #![no_std]
@@ -26,6 +27,9 @@ mod mm;
 // Servicio de archivos en memoria (A7).
 #[path = "../../services/fs/mod.rs"]
 mod fs;
+// Servicio de autenticación y usuarios (A8).
+#[path = "../../services/auth/mod.rs"]
+mod auth;
 
 use console::{Console, Serial, OK, TEXT, WARN};
 use memory::MemorySummary;
@@ -160,6 +164,12 @@ extern "sysv64" fn kernel_main() -> ! {
         a7_fatal(&mut console);
     }
 
+    // --- A8: servicio de login y usuarios ---------------------------------
+    console.println("");
+    if !auth::selftest::run(&mut console) {
+        a8_fatal(&mut console);
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
 
@@ -197,6 +207,12 @@ fn a6_fatal(console: &mut Console) -> ! {
 fn a7_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "A7: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn a8_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "A8: SELFTEST FAILED - halting CPU");
     halt()
 }
 

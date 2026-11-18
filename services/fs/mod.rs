@@ -17,6 +17,9 @@ use crate::cap::{CapError, CapTable, ObjectId, Rights};
 
 pub mod selftest;
 
+/// Slot de capacidad recomendado para el FS en sesiones.
+pub const SESSION_FS_SLOT: usize = 0;
+
 /// Objeto de capacidad que representa el servicio de archivos RAM.
 pub const FS_OBJECT_ID: ObjectId = 0x0100;
 
