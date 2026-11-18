@@ -210,6 +210,31 @@ impl Console {
         }
     }
 
+    /// Limpia la pantalla (ANSI en serie y repintado del framebuffer GOP).
+    pub fn clear_screen(&mut self) {
+        // ANSI clear + cursor home para terminal serie.
+        self.serial.write_byte(0x1B);
+        for &b in b"[2J" {
+            self.serial.write_byte(b);
+        }
+        self.serial.write_byte(0x1B);
+        for &b in b"[H" {
+            self.serial.write_byte(b);
+        }
+        if let Some(fb) = &mut self.framebuffer {
+            fb.clear(BACKGROUND);
+            let band = (self.screen_height / 64).max(4);
+            fb.fill_rect(0, 0, self.screen_width, band, ACCENT);
+            let bottom_y = self.screen_height.saturating_sub(band);
+            fb.fill_rect(0, bottom_y, self.screen_width, band, ACCENT);
+            self.x = self.margin;
+            self.y = self.margin;
+        } else {
+            self.x = self.margin;
+            self.y = self.margin;
+        }
+    }
+
     fn serial_write_line(&mut self, text: &str) {
         for ch in text.chars() {
             self.serial

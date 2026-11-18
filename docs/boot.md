@@ -1,4 +1,4 @@
-# Arranque UEFI, consola, memoria, procesos, IPC, FS RAM y login (A2–A8)
+# Arranque UEFI, consola, memoria, procesos, IPC, FS RAM, login y terminal (A2–A9)
 
 A2 implementa el cargador mínimo de Meridian:
 
@@ -71,14 +71,25 @@ A8 añade un **servicio de login y usuarios** (alpha):
 - pantalla de login textual dibujada por la consola (frontend de texto) y
   auto-pruebas integradas de login, rechazo genérico y capacidades sobre home.
 
+A9 añade una **terminal (shell) alpha** de texto, accesible solo tras login:
+
+- comandos: `ls`, `cd`, `pwd`, `mkdir` (alias `md`), `rmdir` (alias `rd`,
+  solo directorios vacíos), `rm` (archivo) y `rm -r` (directorio con contenido),
+  `cat`, `echo texto > archivo`, `help`, `clear`, `exit`;
+- opera sobre la sesión autenticada (capacidades `READ|WRITE` y directorio
+  personal/cwd en el sistema de archivos RAM);
+- sin sesión válida el acceso a la terminal se deniega explícitamente;
+- `rmdir` sobre un directorio no vacío muestra un error claro sin modificarlo;
+- cada comando se verifica con una prueba scriptada integrada en QEMU.
+
 ## Estructura
 
 ```
 bootinfo/   contrato #[repr(C)] compartido entre bootloader y kernel
 bootloader/ aplicación UEFI: GOP + FAT + cargador ELF + handoff
-kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades, IPC, FS y auth
-  src/main.rs         arranque, init GDT/IDT, pila propia, A3–A8
-  src/console.rs      UART 16550, cursor de texto y salida combinada
+kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades, IPC, FS, auth y term
+  src/main.rs         arranque, init GDT/IDT, pila propia, A3–A9
+  src/console.rs      UART 16550, cursor de texto, limpieza y salida combinada
   src/framebuffer.rs  escritura lineal en GOP (RGB/BGR/bitmask) y fuente 8x8
   src/memory.rs       recorrido y resumen del mapa de memoria UEFI
   src/arch/x86_64/    GDT/TSS, IDT y recuperación de #PF controlado
@@ -96,8 +107,11 @@ services/fs/    servicio de archivos en RAM (A7)
 services/auth/  servicio de login y usuarios (A8, alpha)
   mod.rs              usuarios, hash temporal, login y sesiones con capacidades/home
   selftest.rs         pruebas A8 de login, rechazo genérico y capacidades sobre home
+services/term/  terminal/shell alpha (A9)
+  mod.rs              intérprete de comandos sobre sesión/capacidades y cwd
+  selftest.rs         pruebas scriptadas A9 de comandos y control de acceso
 tools/build.sh  compila y genera build/meridian.img
-tools/run.sh    arranca OVMF/QEMU y valida marcadores A3–A8
+tools/run.sh    arranca OVMF/QEMU y valida marcadores A3–A9
 ```
 
 ## Construcción y ejecución
@@ -129,9 +143,9 @@ build/screen.png    la misma captura convertida con Pillow, si está disponible
 ```
 
 El script devuelve 0 cuando COM1 contiene `Meridian booting`, los marcadores de
-A4, A5, A6, A7 y A8; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL`,
-`A6: ... FAIL`, `A7: ... FAIL` o `A8: ... FAIL`, o falta alguna prueba
-requerida, devuelve 1.
+A4, A5, A6, A7, A8 y A9; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL`,
+`A6: ... FAIL`, `A7: ... FAIL`, `A8: ... FAIL` o `A9: ... FAIL`, o falta
+alguna prueba requerida, devuelve 1.
 
 ## Handoff
 
@@ -472,6 +486,44 @@ Esto demuestra los criterios de aceptación:
 El hash de contraseña es **temporal y no apto para producción** (sustituible
 por Argon2id propio validado en la fase 1, T1.4).
 
+## Verificación de A9
+
+`tools/run.sh` exige los marcadores de A9 y falla ante `A9: ... FAIL` o pruebas
+faltantes. La salida esperada por COM1 incluye (prueba scriptada):
+
+```
+A9: terminal access requires login
+terminal: acceso denegado (login requerido)
+A9: access without login denied
+A9: login ok, terminal session started (user=root)
+A9: help PASS
+A9: pwd PASS
+A9: mkdir/md PASS
+A9: ls PASS
+A9: cd/pwd PASS
+A9: echo > PASS
+A9: cat PASS
+rmdir: error: el directorio no esta vacio: 'docs'
+A9: rmdir non-empty shows clear error PASS
+A9: rm PASS
+A9: rmdir/rd PASS
+A9: rm -r PASS
+A9: clear PASS
+A9: exit PASS
+A9: command script PASS (ls,cd,pwd,mkdir,md,rmdir,rd,rm,rm -r,cat,echo>,help,clear,exit)
+A9: terminal tests PASS (scripted commands, rmdir non-empty error, login required)
+```
+
+Esto demuestra los criterios de aceptación:
+
+1. **Comandos:** `ls`, `cd`, `pwd`, `mkdir`/`md`, `rmdir`/`rd`, `rm`, `rm -r`,
+   `cat`, `echo texto > archivo`, `help`, `clear` y `exit` funcionan en QEMU
+   mediante una prueba scriptada sobre la sesión autenticada.
+2. **Error claro:** `rmdir` sobre un directorio con contenido muestra un error
+   claro y no lo elimina.
+3. **Acceso controlado:** sin login no se accede a la terminal (acceso denegado
+   explícito); la sesión de terminal se inicia solo tras autenticación.
+
 ## Verificación de la consola
 
 Serie (`build/serial.log`): el kernel escribe el título y un resumen de
@@ -492,18 +544,17 @@ meridian: pantalla GOP dibujada
 meridian: ExitBootServices completado, saltando al kernel
 ```
 
-## Limitaciones / pendientes para A9
+## Limitaciones / pendientes para A10
 
-- El login/almacén de usuarios es en memoria (sin persistencia), con hash
-  temporal **no apto para producción** (pendiente Argon2id propio en T1.4).
-  No hay entrada interactiva real de credenciales ni gestión de usuarios/grupos;
-  la "pantalla de login" y la autenticación se ejercitan en auto-pruebas.
-- No existe aún la terminal/shell interactiva (A9) ni comandos de usuario;
-  tampoco gate de acceso a terminal basado en sesión.
+- La terminal y el login se ejercitan mediante auto-pruebas scriptadas en el
+  arranque (no hay aún entrada interactiva real por teclado/serie ni REPL de
+  usuario en tiempo de ejecución). El login/almacén de usuarios es en memoria
+  (sin persistencia), con hash temporal **no apto para producción** (pendiente
+  Argon2id propio en T1.4), sin gestión de usuarios/grupos.
 - El sistema de archivos es volátil (RAM), de tamaño/capacidad fija y sin
   persistencia, permisos por usuario ni cuotas; vive integrado en el kernel
-  (módulo `services/fs`) sin interfaz de servicio/IPC expuesta a procesos de
-  usuario.
+  (módulos `services/fs`, `services/auth`, `services/term`) sin interfaz de
+  servicio/IPC expuesta a procesos de usuario.
 - No hay scheduler, contexto de ejecución en user mode (ring 3) ni syscalls;
   los "procesos" de A5/A6/A7/A8 son estructuras lógicas con PML4 y tabla de
   capacidades ejercitadas desde el kernel con conmutación de `CR3`, no hilos de
