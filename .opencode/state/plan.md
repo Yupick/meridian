@@ -133,7 +133,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #8 mergeado en develop, commit 7d03685)
 
 ### A4 — Memoria física y virtual
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A3
@@ -141,7 +141,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **Criterios de aceptación:**
   - Pruebas de reserva y liberación de páginas sin fugas.
   - Ninguna página es escribible y ejecutable a la vez.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #9 mergeado en develop, commit d6441a4)
 
 ### A5 — Procesos y espacios de direcciones aislados
 - **Estado:** pending
