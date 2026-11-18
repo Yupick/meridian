@@ -1,4 +1,4 @@
-# Arranque UEFI, consola, memoria, procesos e IPC (A2 + A3 + A4 + A5 + A6)
+# Arranque UEFI, consola, memoria, procesos, IPC y FS RAM (A2–A7)
 
 A2 implementa el cargador mínimo de Meridian:
 
@@ -43,13 +43,27 @@ A6 añade **IPC por puertos** y **capacidades simples** por proceso:
   aceptan subconjuntos; cualquier ampliación se rechaza;
 - auto-pruebas de envío/recepción, acceso denegado y reducción sin ampliación.
 
+A7 añade un **servicio de archivos y directorios mínimo en memoria (RAM)**:
+
+- objetos tipados `file`/`dir` con atributos (nombre, tipo, tamaño) en tablas
+  de tamaño fijo (sin heap), con raíz `/`;
+- operaciones: `mkdir`, `rmdir` (solo directorio vacío), `rm` (archivo),
+  `ls`/listar, `read`/leer, `write`/escribir (crea o trunca) y `cd` (resuelve
+  ruta y devuelve nuevo directorio actual);
+- control de acceso por capacidades: las operaciones exigen una capacidad que
+  referencie el objeto del servicio FS con `READ` (consultar/navegar) o
+  `WRITE` (modificar); una capacidad de solo lectura no permite escribir ni
+  alterar la estructura;
+- auto-pruebas de cada operación, incluido error controlado al borrar un
+  directorio no vacío y denegación de escritura con capacidad read-only.
+
 ## Estructura
 
 ```
 bootinfo/   contrato #[repr(C)] compartido entre bootloader y kernel
 bootloader/ aplicación UEFI: GOP + FAT + cargador ELF + handoff
-kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades e IPC
-  src/main.rs         arranque, init GDT/IDT, pila propia, A3/A4/A5/A6
+kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades, IPC y FS
+  src/main.rs         arranque, init GDT/IDT, pila propia, A3–A7
   src/console.rs      UART 16550, cursor de texto y salida combinada
   src/framebuffer.rs  escritura lineal en GOP (RGB/BGR/bitmask) y fuente 8x8
   src/memory.rs       recorrido y resumen del mapa de memoria UEFI
@@ -62,8 +76,11 @@ kernel/     bare-metal x86-64: consola, MM, CPU, procesos, capacidades e IPC
   mm/buddy.rs         asignador buddy de páginas/bloques y contadores
   mm/paging.rs        tablas 4 niveles, W^X y espacios por proceso
   mm/selftest.rs      pruebas de buddy y W^X con marcadores A4
+services/fs/  servicio de archivos en RAM (A7)
+  mod.rs              nodos/atributos tipados y operaciones fs con capacidades
+  selftest.rs         pruebas A7 de operaciones y control de acceso
 tools/build.sh  compila y genera build/meridian.img
-tools/run.sh    arranca OVMF/QEMU y valida marcadores A3/A4/A5/A6
+tools/run.sh    arranca OVMF/QEMU y valida marcadores A3–A7
 ```
 
 ## Construcción y ejecución
@@ -95,8 +112,8 @@ build/screen.png    la misma captura convertida con Pillow, si está disponible
 ```
 
 El script devuelve 0 cuando COM1 contiene `Meridian booting`, los marcadores de
-A4, A5 y A6; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL` o
-`A6: ... FAIL`, o falta alguna prueba requerida, devuelve 1.
+A4, A5, A6 y A7; si aparece cualquier `A4: ... FAIL`, `A5: ... FAIL`,
+`A6: ... FAIL` o `A7: ... FAIL`, o falta alguna prueba requerida, devuelve 1.
 
 ## Handoff
 
@@ -385,6 +402,28 @@ Esto demuestra los tres criterios:
    atenuar a `rwsx` se rechaza con `RightsEscalation`, y la capacidad origen
    permanece `rwsx`.
 
+## Verificación de A7
+
+`tools/run.sh` exige los marcadores de A7 y falla ante `A7: ... FAIL` o pruebas
+faltantes. La salida esperada por COM1 incluye:
+
+```
+A7: fs operations tests PASS (mkdir, rmdir-vacio, rm, listar, leer, escribir, cd; rmdir-no-vacio -> DirectoryNotEmpty)
+A7: read-only capability denied write PASS (write/mkdir/rm/rmdir -> RightsDenied; read/ls/cd permitidos)
+A7: fs service tests PASS (ops completas, atributos tipados, rmdir-no-vacio controlado, read-only sin escritura)
+```
+
+Esto demuestra los criterios de aceptación:
+
+1. **Operaciones y atributos tipados:** se crean/listan directorios y archivos,
+   se escribe/lee contenido, se navega con `cd` y se eliminan archivo y
+   directorio vacío; `ls` expone nombre, tipo (`file`/`dir`) y tamaño.
+2. **Error controlado:** `rmdir` sobre un directorio no vacío devuelve
+   `DirectoryNotEmpty` sin modificarlo.
+3. **Control por capacidades:** con una capacidad de solo `READ` sobre el
+   objeto FS, `write`/`mkdir`/`rm`/`rmdir` devuelven `RightsDenied`, mientras
+   que `read`/`ls`/`cd` siguen permitidos.
+
 ## Verificación de la consola
 
 Serie (`build/serial.log`): el kernel escribe el título y un resumen de
@@ -405,27 +444,30 @@ meridian: pantalla GOP dibujada
 meridian: ExitBootServices completado, saltando al kernel
 ```
 
-## Limitaciones / pendientes para A7
+## Limitaciones / pendientes para A8
 
+- El sistema de archivos es volátil (RAM), de tamaño/capacidad fija y sin
+  persistencia, permisos por usuario ni cuotas; vive integrado en el kernel
+  (módulo `services/fs`) sin interfaz de servicio/IPC expuesta a procesos de
+  usuario.
 - No hay scheduler, contexto de ejecución en user mode (ring 3) ni syscalls;
-  los "procesos" de A5/A6 son estructuras lógicas con PML4 y tabla de
+  los "procesos" de A5/A6/A7 son estructuras lógicas con PML4 y tabla de
   capacidades ejercitadas desde el kernel con conmutación de `CR3`, no hilos de
   usuario independientes.
 - La tabla de procesos no es global: las auto-pruebas mantienen los `Process`
-  en la pila del kernel. A7 debería introducir un registro de procesos,
-  planificación y bloqueo/desbloqueo en `send`/`recv`.
+  en la pila del kernel. Hacen falta registro global, planificación y
+  bloqueo/desbloqueo en `send`/`recv`.
 - No existe PCB completo, carga de ELF de usuario ni ciclo de vida/recursos
   (cierre de puertos, revocación de capacidades, herencia entre procesos).
 - `send`/`recv` son no bloqueantes (devuelven `QueueFull`/`QueueEmpty`); no hay
-  espera ni notificación.
-- Los puertos no se destruyen ni se reciclan; faltan generaciones/refcounts
-  para invalidar capacidades obsoletas con seguridad.
-- Las tablas clonadas para espacios de proceso y algunas páginas de tablas no
-  se liberan de forma exhaustiva (no hay recorrido/ownership completo de page
-  tables ni heap); en A6 tampoco se liberan los PML4 de los procesos de prueba.
-- Las páginas de tabla permanecen RW+NX; no se protegen como solo lectura.
-- El espacio es identidad en `0..4 GiB` (sin higher-half kernel separado ni
-  layout usuario/kernel definitivo).
+  espera ni notificación. Los puertos no se destruyen ni se reciclan (faltan
+  generaciones/refcounts).
+- Las tablas clonadas/espacios de proceso y algunas páginas de tablas no se
+  liberan de forma exhaustiva (no hay recorrido/ownership completo de page
+  tables ni heap).
+- Las páginas de tabla permanecen RW+NX; no se protegen como solo lectura. El
+  espacio es identidad en `0..4 GiB` (sin higher-half kernel separado ni layout
+  usuario/kernel definitivo).
 - Buddy limitado a 1 GiB físico gestionado y mapeo a 0..4 GiB.
 - La consola escribe directamente en el framebuffer físico sin scroll.
 - Imagen/kernel enlazados a dirección física fija; imagen FAT GPT sencilla.
