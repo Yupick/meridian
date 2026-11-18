@@ -221,12 +221,12 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 
 ---
 
-## Fase 1 — Base del sistema (pending)
+## Fase 1 — Base del sistema (in_progress)
 
 - **T1.1 — Cargador con verificación de firma** — pending, alta, Backend. Dependencias: A10. Criterio: el cargador rechaza un kernel con firma Ed25519 inválida.
 - **T1.2 — Servicio de bloques** — pending, alta, Backend. Dependencias: T1.1. Criterio: lectura y escritura de sectores con virtio-blk en QEMU.
 - **T1.3 — Sistema de objetos en disco** — pending, alta, Db + Backend. Dependencias: T1.2. B+ trees para índices, extents para datos, copy-on-write y checksums. Criterio: datos íntegros tras corte de energía simulado.
-- **T1.4 — Criptografía base** — pending, alta, Backend + QA. Dependencias: ninguna (puede hacerse en paralelo). AES-256-XTS, SHA-256, Argon2id y Ed25519 propios. Criterio: pasan todos los vectores oficiales NIST/RFC.
+- **T1.4 — Criptografía base** — in_progress, alta, Backend + QA. Dependencias: ninguna (puede hacerse en paralelo). AES-256-XTS, SHA-256, Argon2id y Ed25519 propios. Criterio: pasan todos los vectores oficiales NIST/RFC.
 - **T1.5 — Cifrado de volumen** — pending, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
 
 ## Fase 2 — Red y servicios de servidor (pending)
