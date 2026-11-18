@@ -154,7 +154,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **completed-at:** 2026-11-18 (PR #10 mergeado en develop, commit 57ff6c1)
 
 ### A6 — IPC y capacidades simples
-- **Estado:** pending
+- **Estado:** completed
 - **Prioridad:** alta
 - **Asignado:** Backend
 - **Dependencias:** A5
@@ -163,7 +163,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - Un proceso envía un mensaje a otro por un puerto.
   - Un proceso sin capacidad recibe error al usar el recurso.
   - Una capacidad puede reducirse, nunca ampliarse.
-- **completed-at:** —
+- **completed-at:** 2026-11-18 (PR #11 mergeado en develop, commit a93b9bb)
 
 ### A7 — Servicio de archivos mínimo
 - **Estado:** pending
