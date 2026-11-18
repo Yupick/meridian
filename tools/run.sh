@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (tarea A2).
+# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A4).
 #
 # Por defecto se ejecuta sin ventana (`-display none`), guarda la salida serie,
 # el debugcon y una captura de pantalla (`screendump`) para poder verificar el
 # mensaje dibujado vía GOP. El proceso termina automáticamente y devuelve 0 si
-# el kernel imprime "Meridian booting" por COM1.
+# el kernel imprime "Meridian booting" por COM1 **y** los marcadores de A4:
+#   A4: buddy alloc/free tests PASS
+#   A4: W^X check PASS
+# Cualquier marcador "A4: ... FAIL" hace fallar el script.
 #
 # Uso:
 #   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot]
@@ -122,14 +125,25 @@ QEMU_PID=$!
 log "QEMU PID $QEMU_PID; esperando al kernel en COM1..."
 
 deadline=$((SECONDS + TIMEOUT))
-success=0
+boot_ok=0
+buddy_ok=0
+wx_ok=0
+fail_marker=0
 while (( SECONDS < deadline )); do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
         log "QEMU terminó antes de tiempo"
         break
     fi
-    if [[ -f "$SERIAL_LOG" ]] && grep -q "Meridian booting" "$SERIAL_LOG"; then
-        success=1
+    if [[ -f "$SERIAL_LOG" ]]; then
+        if grep -q "Meridian booting" "$SERIAL_LOG"; then boot_ok=1; fi
+        if grep -q "A4: buddy alloc/free tests PASS" "$SERIAL_LOG"; then buddy_ok=1; fi
+        if grep -q "A4: W^X check PASS" "$SERIAL_LOG"; then wx_ok=1; fi
+        if grep -q "A4: .*FAIL" "$SERIAL_LOG"; then
+            fail_marker=1
+            break
+        fi
+    fi
+    if (( boot_ok && buddy_ok && wx_ok )); then
         break
     fi
     sleep 0.5
@@ -178,8 +192,12 @@ else
 fi
 
 echo
-if (( success )); then
-    log "OK: el kernel arrancó y escribió 'Meridian booting' por COM1."
+if (( fail_marker )); then
+    log "FALLO: el kernel reportó un marcador 'A4: ... FAIL' (ver COM1)."
+    exit 1
+fi
+if (( boot_ok && buddy_ok && wx_ok )); then
+    log "OK: el kernel arrancó ('Meridian booting') y pasó las pruebas de A4 por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -190,7 +208,7 @@ if (( success )); then
     exit 0
 fi
 
-log "FALLO: no se observó 'Meridian booting' en COM1."
+log "FALLO: marcadores pendientes (boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok)."
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"
