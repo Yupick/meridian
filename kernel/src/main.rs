@@ -24,6 +24,12 @@ mod cap;
 mod ipc;
 #[path = "../mm/mod.rs"]
 mod mm;
+// Controladores PCI/virtio-blk (T1.2).
+#[path = "../drivers/mod.rs"]
+mod drivers;
+// Servicio de bloques sobre virtio-blk (T1.2).
+#[path = "../../services/blk/mod.rs"]
+mod blk;
 // Servicio de archivos en memoria (A7).
 #[path = "../../services/fs/mod.rs"]
 mod fs;
@@ -149,6 +155,23 @@ extern "sysv64" fn kernel_main() -> ! {
         a4_fatal(&mut console, &format_args!("auto-pruebas A4 fallidas"));
     }
 
+    // --- T1.2: servicio de bloques sobre virtio-blk -----------------------
+    console.println("");
+    let block_stats = match blk::init(blk::Policy {
+        writable_devices: 0b0000_0010,
+    }) {
+        Ok(stats) => stats,
+        Err(err) => t12_fatal(&mut console, &format_args!("blk init: {err}")),
+    };
+    let _ = writeln!(
+        console,
+        "T1.2: blk init OK (devices={}, sectors=[{}, {}], queue_size={})",
+        block_stats.devices, block_stats.sectors[0], block_stats.sectors[1], block_stats.queue_size
+    );
+    if !blk::selftest::run(&mut console) {
+        t12_fatal(&mut console, &format_args!("auto-pruebas T1.2 fallidas"));
+    }
+
     // --- A5: procesos y aislamiento de espacios de direcciones ------------
     console.println("");
     if !proc::selftest::run(&mut console) {
@@ -216,6 +239,13 @@ fn a6_fatal(console: &mut Console) -> ! {
 fn a7_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "A7: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn t12_fatal(console: &mut Console, reason: &core::fmt::Arguments<'_>) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "T1.2: INIT FAIL: {reason}");
+    let _ = writeln!(console, "T1.2: SELFTEST FAILED - halting CPU");
     halt()
 }
 

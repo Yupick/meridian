@@ -44,6 +44,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${MERIDIAN_BUILD_DIR:-$ROOT/build}"
 IMAGE="$BUILD_DIR/meridian.img"
+BLOCKTEST_IMAGE="$BUILD_DIR/blocktest.img"
 
 TIMEOUT="${MERIDIAN_TIMEOUT:-45}"
 QEMU_DISPLAY="${MERIDIAN_QEMU_DISPLAY:-none}"
@@ -90,6 +91,7 @@ done
 command -v qemu-system-x86_64 >/dev/null 2>&1 || fail "qemu-system-x86_64 no está instalado"
 command -v socat >/dev/null 2>&1 || fail "socat no está instalado (necesario para el monitor QEMU)"
 [[ -f "$IMAGE" ]] || fail "no existe $IMAGE; ejecuta tools/build.sh primero"
+[[ -f "$BLOCKTEST_IMAGE" ]] || fail "no existe $BLOCKTEST_IMAGE; ejecuta tools/build.sh primero"
 
 # Selección del firmware OVMF.
 OVMF_CODE=""
@@ -138,6 +140,8 @@ qemu-system-x86_64 \
     -drive "if=pflash,format=raw,unit=0,readonly=on,file=$OVMF_CODE" \
     -drive "if=pflash,format=raw,unit=1,file=$OVMF_VARS" \
     -drive "file=$IMAGE,format=raw,if=virtio" \
+    -drive "file=$BLOCKTEST_IMAGE,format=raw,if=none,id=blockqa" \
+    -device "virtio-blk-pci,drive=blockqa,addr=03.0" \
     -vga std \
     -display "$QEMU_DISPLAY" \
     -net none \
@@ -174,6 +178,12 @@ a9_access_ok=0
 a9_script_ok=0
 a9_rmdir_nonempty_ok=0
 a9_summary_ok=0
+t12_detect_ok=0
+t12_queue_ok=0
+t12_read_ok=0
+t12_write_ok=0
+t12_cap_ok=0
+t12_summary_ok=0
 fail_marker=0
 while (( SECONDS < deadline )); do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -201,7 +211,13 @@ while (( SECONDS < deadline )); do
         if grep -q "A9: command script PASS" "$SERIAL_LOG"; then a9_script_ok=1; fi
         if grep -q "A9: rmdir non-empty shows clear error PASS" "$SERIAL_LOG"; then a9_rmdir_nonempty_ok=1; fi
         if grep -q "A9: terminal tests PASS" "$SERIAL_LOG"; then a9_summary_ok=1; fi
-        if grep -Eq "A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL" "$SERIAL_LOG"; then
+        if grep -q "T1.2: virtio-blk detect PASS" "$SERIAL_LOG"; then t12_detect_ok=1; fi
+        if grep -q "T1.2: virtqueue setup PASS" "$SERIAL_LOG"; then t12_queue_ok=1; fi
+        if grep -q "T1.2: sector read PASS" "$SERIAL_LOG"; then t12_read_ok=1; fi
+        if grep -q "T1.2: write/readback PASS" "$SERIAL_LOG"; then t12_write_ok=1; fi
+        if grep -q "T1.2: capability denied without WRITE PASS" "$SERIAL_LOG"; then t12_cap_ok=1; fi
+        if grep -q "T1.2: block service tests PASS" "$SERIAL_LOG"; then t12_summary_ok=1; fi
+        if grep -Eq "A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL" "$SERIAL_LOG"; then
             fail_marker=1
             break
         fi
@@ -223,6 +239,7 @@ while (( SECONDS < deadline )); do
             && a7_ops_ok && a7_ro_ok && a7_summary_ok \
             && a8_screen_ok && a8_reject_ok && a8_caps_ok && a8_summary_ok \
             && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok \
+            && t12_detect_ok && t12_queue_ok && t12_read_ok && t12_write_ok && t12_cap_ok && t12_summary_ok \
             && signature_ok )); then
         break
     fi
@@ -295,8 +312,9 @@ if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
       && a6_ipc_ok && a6_denied_ok && a6_reduce_ok && a6_summary_ok \
       && a7_ops_ok && a7_ro_ok && a7_summary_ok \
       && a8_screen_ok && a8_reject_ok && a8_caps_ok && a8_summary_ok \
-      && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok )); then
-    log "OK: firma verificada; kernel arrancó ('Meridian booting') y pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios) y A9 (terminal alpha) por COM1."
+      && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok \
+      && t12_detect_ok && t12_queue_ok && t12_read_ok && t12_write_ok && t12_cap_ok && t12_summary_ok )); then
+    log "OK: firma verificada; kernel arrancó ('Meridian booting') y pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios), A9 (terminal alpha) y T1.2 (block service) por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -307,7 +325,7 @@ if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
     exit 0
 fi
 
-log "FALLO: marcadores pendientes (firma=$signature_ok, reject=$signature_reject_ok, boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok)."
+log "FALLO: marcadores pendientes (firma=$signature_ok, reject=$signature_reject_ok, boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok, t12_detect=$t12_detect_ok, t12_queue=$t12_queue_ok, t12_read=$t12_read_ok, t12_write=$t12_write_ok, t12_cap=$t12_cap_ok, t12_summary=$t12_summary_ok)."
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"

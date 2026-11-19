@@ -23,6 +23,12 @@ kernel con Ed25519 (`build/kernel.sig`, copiado a la ESP como `\kernel.sig`) y
 el bootloader verifica esa firma antes de cargar el ELF; esta guía refleja ese
 comportamiento en construcción, arranque y QA.
 
+T1.2 (Fase 1) añade el servicio de bloques sobre virtio-blk: `tools/build.sh`
+genera `build/blocktest.img` (1 MiB) y `tools/run.sh` lo conecta como segundo
+disco virtio-blk en `00:03.0`. Durante el arranque las auto-pruebas leen el
+sector 1 del disco de arranque (EFI PART), escriben/leen los sectores 0 y 1 del
+disco QA y comprueban que una capacidad sin `WRITE` no puede escribir.
+
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
 auto-pruebas scriptadas durante el arranque**. Esto se documenta en detalle en
@@ -90,8 +96,8 @@ build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
 Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`
-y COM1 contiene todos los marcadores `A4`–`A9`; devuelve `1` si falta alguno o
-aparece un marcador `FAIL`. Opciones útiles:
+y COM1 contiene todos los marcadores `A4`–`A9` y `T1.2`; devuelve `1` si falta
+alguno o aparece un marcador `FAIL`. Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
@@ -110,12 +116,14 @@ Este comando hace todo lo anterior y además verifica explícitamente por COM1:
 
 1. que el login se muestra y autentica (A8);
 2. que la terminal exige login y ejecuta **todos** los comandos de A9;
-3. que no hay marcadores `A4`–`A9` con `FAIL`.
+3. que el servicio de bloques detecta dos discos, configura la cola, lee,
+   escribe y verifica capacidades (T1.2);
+4. que no hay marcadores `A4`–`A9` ni `T1.2` con `FAIL`.
 
 Salida esperada al final:
 
 ```
-[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (40/40 marcadores; 40 esperados)
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (46/46 marcadores; 46 esperados)
 ```
 
 Si falla, imprime los marcadores ausentes y la ruta a `build/serial.log`.
