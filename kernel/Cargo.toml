@@ -9,5 +9,6 @@ build = "build.rs"
 
 [dependencies]
 meridian-bootinfo = { path = "../bootinfo" }
+meridian-crypto = { path = "../crypto" }
 # Fuente bitmap 8x8 de dominio público; solo la tabla básica, sin Unicode.
 font8x8 = { version = "0.3", default-features = false }
