@@ -1,8 +1,8 @@
 # Meridian Alpha — guía de construcción, arranque y terminal
 
-Esta guía cubre la **Alpha (Fase 0, A1–A10)**: cómo comprobar el entorno,
-construir la imagen UEFI, arrancarla en QEMU/OVMF y ejecutar/verificar la
-terminal scriptada.
+Esta guía cubre la **Alpha (Fase 0, A1–A10)** y la pila de red **T2.1**:
+cómo comprobar el entorno, construir la imagen UEFI, arrancarla en QEMU/OVMF y
+ejecutar/verificar la terminal scriptada y el tráfico de red real host↔guest.
 
 ## 1. Alcance de la Alpha
 
@@ -54,6 +54,26 @@ La passphrase embebida (`meridian-alpha-volume-key-v1`) y la sal determinista
 derivada de `sha256(b"meridian-volume-dev-salt-v1")` son **solo de desarrollo y
 QA**. En producción la passphrase debe venir de una fuente segura y la sal debe
 ser aleatoria por volumen y persistirse en la cabecera.
+
+T2.1 (Fase 2) añade la pila de red sobre virtio-net transicional
+(`1af4:1000`, `disable-modern=on`) en PCI `04.0`, con dos colas (RX/TX) de 256
+entradas y 4 páginas contiguas cada una. El tráfico es **real host↔guest** por
+QEMU usando un backend UDP dgram (sin TAP/root):
+`guest 127.0.0.1:55125 <-> host peer 127.0.0.1:55124`. `tools/run.sh` arranca
+`tools/net-peer.py` en background antes de QEMU; el peer construye y reenvía
+frames Ethernet crudos hasta recibir las respuestas del guest y registra en
+`build/net-peer.log` los seis eventos `NETPEER: ... PASS`.
+
+Constantes de red T2.1:
+
+| Rol | MAC | IPv4 | IPv6 |
+| --- | --- | --- | --- |
+| Guest | `52:54:00:00:00:15` | `10.0.2.15` | `fd00::15` |
+| Host/peer | `52:54:00:00:00:02` | `10.0.2.2` | `fd00::2` |
+
+Puertos: TCP `8080` (handshake SYN → SYN-ACK/ISN `0x1000` → ACK) y UDP `9999`
+(echo). El selftest procesa ARP, ICMPv4 echo (8→0), UDP echo, handshake TCP e
+ICMPv6 echo (128→129) con checksums y pseudo-headers correctos.
 
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
@@ -121,9 +141,10 @@ build/screen.ppm     # captura GOP
 build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
-Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`
-y COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3` y `T1.5`;
-devuelve `1` si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
+Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`,
+COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5` y `T2.1`,
+y `build/net-peer.log` contiene los seis eventos `NETPEER: ... PASS`; devuelve
+`1` si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
@@ -148,12 +169,15 @@ Este comando hace todo lo anterior y además verifica explícitamente por COM1:
    detección de corrupción por checksum (T1.3);
 5. que el volumen cifrado pasa formato, rechazo de clave errónea, ciphertext en
    crudo y persistencia tras `open` (T1.5);
-6. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3` ni `T1.5` con `FAIL`.
+6. que la pila de red detecta virtio-net y completa ARP, ping IPv4, UDP echo,
+   handshake TCP y ping IPv6 con tráfico real verificado por `tools/net-peer.py`
+   (T2.1);
+7. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5` ni `T2.1` con `FAIL`.
 
 Salida esperada al final:
 
 ```
-[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (56/56 marcadores; 56 esperados)
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (64/64 marcadores; 64 esperados)
 ```
 
 Si falla, imprime los marcadores ausentes y la ruta a `build/serial.log`.
@@ -166,6 +190,7 @@ tests/run-alpha.sh --no-screenshot
 ```
 
 Los logs completos quedan en `build/alpha-build.log` y `build/alpha-run.log`.
+El tráfico de red T2.1 queda registrado en `build/net-peer.log`.
 
 QA adicional de la firma del kernel (T1.1, fuera del alcance de la Alpha):
 
