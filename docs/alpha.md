@@ -1,8 +1,9 @@
 # Meridian Alpha — guía de construcción, arranque y terminal
 
-Esta guía cubre la **Alpha (Fase 0, A1–A10)** y la pila de red **T2.1**:
-cómo comprobar el entorno, construir la imagen UEFI, arrancarla en QEMU/OVMF y
-ejecutar/verificar la terminal scriptada y el tráfico de red real host↔guest.
+Esta guía cubre la **Alpha (Fase 0, A1–A10)**, la pila de red **T2.1** y los
+**usuarios con permisos (T2.2)**: cómo comprobar el entorno, construir la imagen
+UEFI, arrancarla en QEMU/OVMF y ejecutar/verificar la terminal scriptada, el
+tráfico de red real host↔guest y las ACLs sobre el volumen cifrado.
 
 ## 1. Alcance de la Alpha
 
@@ -75,6 +76,37 @@ Puertos: TCP `8080` (handshake SYN → SYN-ACK/ISN `0x1000` → ACK) y UDP `9999
 (echo). El selftest procesa ARP, ICMPv4 echo (8→0), UDP echo, handshake TCP e
 ICMPv6 echo (128→129) con checksums y pseudo-headers correctos.
 
+T2.2 (Fase 2) añade grupos y ACLs sobre los objetos del volumen cifrado de T1.5.
+`services/auth` infiere los grupos del nombre al registrar (`root`:
+`ADMIN|USERS`, `alice`: `USERS`, `bob`: `USERS|AUDIT`, `guest`: `GUEST`;
+cualquier otro: `USERS`) y los copia a la sesión. `services/perm` define ACLs
+estáticas (sin heap) sobre las claves de objeto `10`–`13` y comprueba los
+grupos de la sesión **antes** de delegar en `vol::EncryptedVolume`, pasando
+siempre las capacidades y el slot del servicio de bloques:
+
+| Objeto | Lectura | Escritura |
+| --- | --- | --- |
+| `10` `OBJ_SHARED_CONFIG` | `USERS`, `ADMIN` | `ADMIN` |
+| `11` `OBJ_AUDIT_LOG` | `AUDIT`, `ADMIN` | `ADMIN` |
+| `12` `OBJ_ROOT_SECRET` | `ADMIN` | `ADMIN` |
+| `13` `OBJ_PUBLIC_NOTICE` | todos (`GROUP_ALL`) | `ADMIN` |
+
+Los errores son `UnknownObject`, `AccessDenied` y `Volume(VolError)`. Las
+auto-pruebas verifican la asignación de grupos, una lectura permitida, una
+escritura denegada (con root escribiendo el mismo objeto), el aislamiento entre
+grupos y que las ACLs siguen aplicándose tras reabrir el volumen cifrado.
+Nunca se imprimen claves, passphrases ni ciphertext. Marcadores T2.2 en
+`build/serial.log`:
+
+```
+T2.2: group assignment PASS
+T2.2: ACL read allowed PASS
+T2.2: ACL write denied PASS
+T2.2: group isolation PASS
+T2.2: encrypted ACL persistence PASS
+T2.2: permissions tests PASS
+```
+
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
 auto-pruebas scriptadas durante el arranque**. Esto se documenta en detalle en
@@ -142,9 +174,9 @@ build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
 Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`,
-COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5` y `T2.1`,
-y `build/net-peer.log` contiene los seis eventos `NETPEER: ... PASS`; devuelve
-`1` si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
+COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5`, `T2.1` y
+`T2.2`, y `build/net-peer.log` contiene los seis eventos `NETPEER: ... PASS`;
+devuelve `1` si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
@@ -169,15 +201,19 @@ Este comando hace todo lo anterior y además verifica explícitamente por COM1:
    detección de corrupción por checksum (T1.3);
 5. que el volumen cifrado pasa formato, rechazo de clave errónea, ciphertext en
    crudo y persistencia tras `open` (T1.5);
-6. que la pila de red detecta virtio-net y completa ARP, ping IPv4, UDP echo,
-   handshake TCP y ping IPv6 con tráfico real verificado por `tools/net-peer.py`
-   (T2.1);
-7. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5` ni `T2.1` con `FAIL`.
+ 6. que la pila de red detecta virtio-net y completa ARP, ping IPv4, UDP echo,
+    handshake TCP y ping IPv6 con tráfico real verificado por `tools/net-peer.py`
+    (T2.1);
+ 7. que los grupos se asignan correctamente, que una lectura permitida y una
+    escritura denegada se comportan según la ACL, que los grupos están aislados
+    y que las ACLs persisten en el volumen cifrado tras `open` (T2.2);
+ 8. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5`, `T2.1` ni `T2.2`
+    con `FAIL`.
 
 Salida esperada al final:
 
 ```
-[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (64/64 marcadores; 64 esperados)
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (70/70 marcadores; 70 esperados)
 ```
 
 Si falla, imprime los marcadores ausentes y la ruta a `build/serial.log`.

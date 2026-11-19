@@ -1,8 +1,8 @@
 //! Kernel de Meridian — consola (A3), memoria/paginación (A4), procesos
 //! aislados (A5), IPC/capacidades (A6), servicio de archivos RAM (A7),
 //! login/usuarios (A8), terminal alpha (A9), servicio de bloques (T1.2),
-//! objetos en disco con copy-on-write (T1.3), volumen cifrado (T1.5)
-//! y pila de red sobre virtio-net (T2.1).
+//! objetos en disco con copy-on-write (T1.3), volumen cifrado (T1.5),
+//! pila de red sobre virtio-net (T2.1) y usuarios con permisos (T2.2).
 
 #![no_main]
 #![no_std]
@@ -50,6 +50,9 @@ mod auth;
 // Terminal/shell alpha (A9).
 #[path = "../../services/term/mod.rs"]
 mod term;
+// Usuarios con permisos sobre objetos del volumen cifrado (T2.2).
+#[path = "../../services/perm/mod.rs"]
+pub mod perm;
 
 use console::{Console, Serial, OK, TEXT, WARN};
 use memory::MemorySummary;
@@ -231,6 +234,12 @@ extern "sysv64" fn kernel_main() -> ! {
         a9_fatal(&mut console);
     }
 
+    // --- T2.2: usuarios con permisos sobre el volumen cifrado --------------
+    console.println("");
+    if !perm::selftest::run(&mut console) {
+        t22_fatal(&mut console);
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
 
@@ -293,6 +302,12 @@ fn t15_fatal(console: &mut Console) -> ! {
 fn t21_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "T2.1: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn t22_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "T2.2: SELFTEST FAILED - halting CPU");
     halt()
 }
 
