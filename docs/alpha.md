@@ -36,6 +36,25 @@ de hashes. Las auto-pruebas formatean el disco, confirman que un commit no
 sobrescribe nodos vivos, simulan un corte de energía antes del commit y
 comprueban que la corrupción de un dato, un nodo o un superblock se detecta.
 
+T1.5 (Fase 1) añade el volumen cifrado sobre ese sistema de objetos: cada
+objeto de usuario viaja en un frame `MRDVOBJ1` autenticado con SHA-256 y se
+cifra por completo con XTS-AES-256 antes de escribirse, de modo que el hash del
+ObjectStore cubre ciphertext y no plaintext. La clave XTS de 64 bytes se deriva
+con Argon2id (2 iteraciones, 1 lane, 8 KiB) a partir de una passphrase; el
+objeto 0 guarda la cabecera `MRDVOL01` (versión, parámetros KDF, sal y su
+checksum) y el objeto 1 un verificador cifrado que permite rechazar passphrases
+incorrectas con `WrongKey`. El tweak es `LE64(object_key) || "MRDVOL01"`: no
+incluye el LBA porque el commit COW puede cambiarlo, ni la clave porque el
+tweak es público. Las auto-pruebas formatean el volumen, escriben un payload
+conocido, verifican que una clave errónea se rechaza, que `raw_read` devuelve
+ciphertext distinto del plaintext (y que su corrupción se detecta), y que el
+dato sobrevive a un segundo `open` sin formatear.
+
+La passphrase embebida (`meridian-alpha-volume-key-v1`) y la sal determinista
+derivada de `sha256(b"meridian-volume-dev-salt-v1")` son **solo de desarrollo y
+QA**. En producción la passphrase debe venir de una fuente segura y la sal debe
+ser aleatoria por volumen y persistirse en la cabecera.
+
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
 auto-pruebas scriptadas durante el arranque**. Esto se documenta en detalle en
@@ -103,8 +122,8 @@ build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
 Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`
-y COM1 contiene todos los marcadores `A4`–`A9`, `T1.2` y `T1.3`; devuelve `1`
-si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
+y COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3` y `T1.5`;
+devuelve `1` si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
@@ -127,12 +146,14 @@ Este comando hace todo lo anterior y además verifica explícitamente por COM1:
    escribe y verifica capacidades (T1.2);
 4. que el sistema de objetos en disco pasa formato, COW, corte simulado y
    detección de corrupción por checksum (T1.3);
-5. que no hay marcadores `A4`–`A9`, `T1.2` ni `T1.3` con `FAIL`.
+5. que el volumen cifrado pasa formato, rechazo de clave errónea, ciphertext en
+   crudo y persistencia tras `open` (T1.5);
+6. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3` ni `T1.5` con `FAIL`.
 
 Salida esperada al final:
 
 ```
-[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (51/51 marcadores; 51 esperados)
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (56/56 marcadores; 56 esperados)
 ```
 
 Si falla, imprime los marcadores ausentes y la ruta a `build/serial.log`.
