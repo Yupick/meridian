@@ -231,7 +231,8 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
   - **completed-at:** 2026-11-19 (PR #20 mergeado en develop, commit bd4d0c4; `tests/run-alpha.sh` pasa 51/51 marcadores con formato, COW, corte simulado y detección de corrupción por checksum; `tests/run-signature.sh` OK)
 - **T1.4 — Criptografía base** — completed, alta, Backend + QA. Dependencias: ninguna (puede hacerse en paralelo). AES-256-XTS, SHA-256, Argon2id y Ed25519 propios. Criterio: pasan todos los vectores oficiales NIST/RFC.
   - **completed-at:** 2026-11-18 (PR #17 mergeado en develop, commit 0ec845d; `tests/run-crypto-vectors.sh` OK en debug y release, 14/14 tests)
-- **T1.5 — Cifrado de volumen** — pending, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
+- **T1.5 — Cifrado de volumen** — completed, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
+  - **completed-at:** 2026-11-19 (PR #21 mergeado en develop, commit cfc2a8a; `tests/run-alpha.sh` pasa 56/56 marcadores con XTS-AES-256, Argon2id, rechazo de clave errónea, ciphertext en crudo y persistencia tras `open`; `tests/run-signature.sh` OK)
 
 ## Fase 2 — Red y servicios de servidor (pending)
 
