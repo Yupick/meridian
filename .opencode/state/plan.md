@@ -221,7 +221,9 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 
 ---
 
-## Fase 1 — Base del sistema (in_progress)
+## Fase 1 — Base del sistema (completed)
+
+- **completed-at:** 2026-11-19 (PR #22 `develop -> main` mergeado, commit `72f9bf3`; tag `v0.2.0-base`; criterio de salida cumplido con volumen cifrado persistente y 56/56 marcadores en `tests/run-alpha.sh`).
 
 - **T1.1 — Cargador con verificación de firma** — completed, alta, Backend. Dependencias: A10. Criterio: el cargador rechaza un kernel con firma Ed25519 inválida.
   - **completed-at:** 2026-11-18 (PR #18 mergeado en develop, commit fdfd2a0; `tests/run-signature.sh` rechaza firma corrompida y `tests/run-alpha.sh` pasa 40/40 marcadores)
@@ -234,7 +236,7 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **T1.5 — Cifrado de volumen** — completed, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
   - **completed-at:** 2026-11-19 (PR #21 mergeado en develop, commit cfc2a8a; `tests/run-alpha.sh` pasa 56/56 marcadores con XTS-AES-256, Argon2id, rechazo de clave errónea, ciphertext en crudo y persistencia tras `open`; `tests/run-signature.sh` OK)
 
-## Fase 2 — Red y servicios de servidor (pending)
+## Fase 2 — Red y servicios de servidor (in_progress)
 
 - **T2.1 — Pila de red** — pending, alta, Backend. Dependencias: A10. Ethernet, ARP, IPv4/IPv6, TCP y UDP con virtio-net. Criterio: ping y conexión TCP desde el host.
 - **T2.2 — Usuarios con permisos** — pending, alta, Backend. Dependencias: A8, T1.5. Grupos y permisos sobre el sistema de objetos. Criterio: pruebas de acceso permitido y denegado.
