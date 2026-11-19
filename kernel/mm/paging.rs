@@ -16,6 +16,11 @@
 //! contiene en 512 entradas de 4 KiB. No existen alias virtuales en el espacio
 //! kernel inicial, lo que hace comprobable W^X recorriendo las tablas.
 //!
+//! T1.2 añade [`identity_map_mmio`], un mapeo identidad puntual de MMIO alto
+//! (por ejemplo una BAR PCI a 32 GiB) mediante páginas de 4 KiB no cacheables.
+//! Ese mapeo se crea **después** del selftest A4 y no se propaga a los
+//! procesos: `create_address_space` sigue copiando solo las entradas PDPT `0..3`.
+//!
 //! # A5: espacios por proceso
 //!
 //! Cada proceso obtiene su propio PML4. Para mantener operativo el kernel (y el
@@ -38,9 +43,12 @@ const ENTRIES: usize = 512;
 const PRESENT: u64 = 1 << 0;
 const WRITABLE: u64 = 1 << 1;
 const USER: u64 = 1 << 2;
+const PAGE_WRITE_THROUGH: u64 = 1 << 3;
+const PAGE_CACHE_DISABLE: u64 = 1 << 4;
 const HUGE_PAGE: u64 = 1 << 7;
 const NO_EXECUTE: u64 = 1u64 << 63;
 const ADDR_MASK: u64 = 0x000f_ffff_ffff_f000;
+const HUGE_PAGE_SIZE: u64 = 2 * 1024 * 1024;
 
 const EFER_MSR: u32 = 0xC000_0080;
 const EFER_NXE: u64 = 1 << 11;
@@ -274,6 +282,92 @@ pub fn kernel_root() -> u64 {
     KERNEL_ROOT.load(Ordering::Relaxed)
 }
 
+/// Mapea MMIO identidad (`virtual == físico`) en la raíz del kernel.
+///
+/// Se usa para BARs PCI por encima de 4 GiB: el rango `[base, base + len)` se
+/// cubre con páginas de 4 KiB, creando/reutilizando PML4, PDPT, PD y PT. Cada
+/// PTE nueva lleva `PWT=1` y `PCD=1` (PAT=0 → UC) para que los registros MMIO
+/// no se cacheen con Write-Back. No modifica mapeos existentes: un PDE de 2 MiB
+/// (caso A4 en direcciones < 4 GiB) o una PTE ya presente se respetan.
+pub fn identity_map_mmio(base: u64, len: u64) -> Result<(), PagingError> {
+    let root = kernel_root();
+    if root == 0 {
+        return Err(PagingError::NotInitialized);
+    }
+    if base == 0
+        || len == 0
+        || len > HUGE_PAGE_SIZE
+        || base % PAGE_SIZE != 0
+        || !is_canonical_low(base)
+    {
+        return Err(PagingError::InvalidAddress);
+    }
+    let end = base.checked_add(len).ok_or(PagingError::InvalidAddress)?;
+    if !is_canonical_low(end) {
+        return Err(PagingError::InvalidAddress);
+    }
+    let offset_in_huge = base & (HUGE_PAGE_SIZE - 1);
+    if offset_in_huge + len > HUGE_PAGE_SIZE {
+        return Err(PagingError::InvalidAddress);
+    }
+    let end = align_up(end);
+
+    let mut address = base;
+    while address < end {
+        let indices = indices_for(address);
+
+        let pml4e = read_entry(root, indices.pml4);
+        let pdpt = if pml4e & PRESENT == 0 {
+            let table = alloc_zero_page()?;
+            write_entry(root, indices.pml4, table | PRESENT | WRITABLE);
+            table
+        } else if pml4e & HUGE_PAGE != 0 {
+            return Err(PagingError::InvalidAddress);
+        } else {
+            pml4e & ADDR_MASK
+        };
+
+        let pdpte = read_entry(pdpt, indices.pdpt);
+        let pd = if pdpte & PRESENT == 0 {
+            let table = alloc_zero_page()?;
+            write_entry(pdpt, indices.pdpt, table | PRESENT | WRITABLE);
+            table
+        } else if pdpte & HUGE_PAGE != 0 {
+            return Err(PagingError::InvalidAddress);
+        } else {
+            pdpte & ADDR_MASK
+        };
+
+        let pde = read_entry(pd, indices.pd);
+        if pde & HUGE_PAGE != 0 {
+            // A4 ya cubre este rango con una página de 2 MiB: no se toca y se
+            // avanza directamente al siguiente límite.
+            address = (address & !(HUGE_PAGE_SIZE - 1)) + HUGE_PAGE_SIZE;
+            continue;
+        }
+
+        let pt = if pde & PRESENT == 0 {
+            let table = alloc_zero_page()?;
+            write_entry(pd, indices.pd, table | PRESENT | WRITABLE);
+            table
+        } else {
+            pde & ADDR_MASK
+        };
+
+        if read_entry(pt, indices.pt) & PRESENT == 0 {
+            write_entry(
+                pt,
+                indices.pt,
+                address | PRESENT | WRITABLE | PAGE_WRITE_THROUGH | PAGE_CACHE_DISABLE | NO_EXECUTE,
+            );
+        }
+        address += PAGE_SIZE;
+    }
+
+    load_cr3(kernel_root());
+    Ok(())
+}
+
 /// Carga una raíz en CR3.
 pub fn switch(root: u64) {
     load_cr3(root);
@@ -431,12 +525,7 @@ pub fn unmap_page_in(root: u64, va: u64) -> Result<(), PagingError> {
 }
 
 /// Cambia permisos de todas las páginas de `[start, end)` en `root`.
-fn set_range_flags(
-    root: u64,
-    start: u64,
-    end: u64,
-    flags: PageFlags,
-) -> Result<(), PagingError> {
+fn set_range_flags(root: u64, start: u64, end: u64, flags: PageFlags) -> Result<(), PagingError> {
     if start >= end {
         return Ok(());
     }
@@ -479,7 +568,11 @@ fn set_page_flags(root: u64, va: u64, flags: PageFlags) -> Result<(), PagingErro
         pde & ADDR_MASK
     };
 
-    write_entry(pt, indices.pt, (va & !(PAGE_SIZE - 1)) | flags.to_pte_bits());
+    write_entry(
+        pt,
+        indices.pt,
+        (va & !(PAGE_SIZE - 1)) | flags.to_pte_bits(),
+    );
     Ok(())
 }
 
@@ -548,8 +641,7 @@ pub fn audit_root(root: u64) -> Result<Audit, PagingError> {
                     if pt_entry & PRESENT == 0 {
                         continue;
                     }
-                    let address =
-                        page_table_address(pml4_index, pdpt_index, pd_index, pt_index);
+                    let address = page_table_address(pml4_index, pdpt_index, pd_index, pt_index);
                     audit.check_leaf(pt_entry, 1, "PT-4KiB", pt_index, address);
                 }
             }

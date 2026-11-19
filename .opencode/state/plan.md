@@ -221,13 +221,18 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 
 ---
 
-## Fase 1 — Base del sistema (pending)
+## Fase 1 — Base del sistema (in_progress)
 
-- **T1.1 — Cargador con verificación de firma** — pending, alta, Backend. Dependencias: A10. Criterio: el cargador rechaza un kernel con firma Ed25519 inválida.
-- **T1.2 — Servicio de bloques** — pending, alta, Backend. Dependencias: T1.1. Criterio: lectura y escritura de sectores con virtio-blk en QEMU.
-- **T1.3 — Sistema de objetos en disco** — pending, alta, Db + Backend. Dependencias: T1.2. B+ trees para índices, extents para datos, copy-on-write y checksums. Criterio: datos íntegros tras corte de energía simulado.
-- **T1.4 — Criptografía base** — pending, alta, Backend + QA. Dependencias: ninguna (puede hacerse en paralelo). AES-256-XTS, SHA-256, Argon2id y Ed25519 propios. Criterio: pasan todos los vectores oficiales NIST/RFC.
-- **T1.5 — Cifrado de volumen** — pending, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
+- **T1.1 — Cargador con verificación de firma** — completed, alta, Backend. Dependencias: A10. Criterio: el cargador rechaza un kernel con firma Ed25519 inválida.
+  - **completed-at:** 2026-11-18 (PR #18 mergeado en develop, commit fdfd2a0; `tests/run-signature.sh` rechaza firma corrompida y `tests/run-alpha.sh` pasa 40/40 marcadores)
+- **T1.2 — Servicio de bloques** — completed, alta, Backend. Dependencias: T1.1. Criterio: lectura y escritura de sectores con virtio-blk en QEMU.
+  - **completed-at:** 2026-11-19 (PR #19 mergeado en develop, commit 114fbfb; `tests/run-alpha.sh` pasa 46/46 marcadores con lectura, escritura y control de capacidades del servicio de bloques)
+- **T1.3 — Sistema de objetos en disco** — completed, alta, Db + Backend. Dependencias: T1.2. B+ trees para índices, extents para datos, copy-on-write y checksums. Criterio: datos íntegros tras corte de energía simulado.
+  - **completed-at:** 2026-11-19 (PR #20 mergeado en develop, commit bd4d0c4; `tests/run-alpha.sh` pasa 51/51 marcadores con formato, COW, corte simulado y detección de corrupción por checksum; `tests/run-signature.sh` OK)
+- **T1.4 — Criptografía base** — completed, alta, Backend + QA. Dependencias: ninguna (puede hacerse en paralelo). AES-256-XTS, SHA-256, Argon2id y Ed25519 propios. Criterio: pasan todos los vectores oficiales NIST/RFC.
+  - **completed-at:** 2026-11-18 (PR #17 mergeado en develop, commit 0ec845d; `tests/run-crypto-vectors.sh` OK en debug y release, 14/14 tests)
+- **T1.5 — Cifrado de volumen** — completed, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
+  - **completed-at:** 2026-11-19 (PR #21 mergeado en develop, commit cfc2a8a; `tests/run-alpha.sh` pasa 56/56 marcadores con XTS-AES-256, Argon2id, rechazo de clave errónea, ciphertext en crudo y persistencia tras `open`; `tests/run-signature.sh` OK)
 
 ## Fase 2 — Red y servicios de servidor (pending)
 

@@ -7,7 +7,9 @@
 #   - la terminal exige login y ejecuta TODOS los comandos de A9:
 #     ls, cd, pwd, mkdir/md, rmdir/rd, rm, rm -r, cat, echo > archivo,
 #     help, clear y exit;
-#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9 ... FAIL".
+#   - los objetos en disco con COW, checksums y corte simulado (T1.3);
+#   - el volumen cifrado XTS-AES-256/Argon2id y su persistencia (T1.5);
+#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5 ... FAIL".
 #
 # Devuelve 0 solo si la build, el arranque y todas las comprobaciones pasan.
 #
@@ -35,7 +37,7 @@ log()  { printf '[alpha] %s\n' "$*"; }
 fail() { printf '[alpha] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -121,6 +123,22 @@ REQUIRED_MARKERS=(
     "A9: exit PASS"
     "A9: command script PASS (ls,cd,pwd,mkdir,md,rmdir,rd,rm,rm -r,cat,echo>,help,clear,exit)"
     "A9: terminal tests PASS (scripted commands, rmdir non-empty error, login required)"
+    "T1.2: virtio-blk detect PASS"
+    "T1.2: virtqueue setup PASS"
+    "T1.2: sector read PASS"
+    "T1.2: write/readback PASS"
+    "T1.2: capability denied without WRITE PASS"
+    "T1.2: block service tests PASS"
+    "T1.3: disk objects format PASS"
+    "T1.3: cow commit PASS"
+    "T1.3: crash consistency PASS"
+    "T1.3: checksum detects corruption PASS"
+    "T1.3: disk object tests PASS"
+    "T1.5: encrypted volume format PASS"
+    "T1.5: wrong key rejected PASS"
+    "T1.5: raw sectors are ciphertext PASS"
+    "T1.5: persists after reopen PASS"
+    "T1.5: volume encryption tests PASS"
 )
 
 log "verificando ${#REQUIRED_MARKERS[@]} marcadores en COM1"
@@ -135,7 +153,7 @@ for marker in "${REQUIRED_MARKERS[@]}"; do
 done
 (( missing == 0 )) || fail "faltan $missing marcadores de Alpha en $SERIAL_LOG"
 
-if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL' "$SERIAL_LOG"; then
+if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL' "$SERIAL_LOG"; then
     fail "el kernel reportó un marcador FAIL (ver $SERIAL_LOG)"
 fi
 

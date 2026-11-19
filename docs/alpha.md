@@ -18,6 +18,43 @@ La Alpha incluye:
 - terminal alpha que exige login y ejecuta comandos scriptados (A9);
 - QA de integración en un único comando y esta guía (A10).
 
+Además, desde T1.1 (Fase 1, ver `docs/boot.md`), `tools/build.sh` firma el
+kernel con Ed25519 (`build/kernel.sig`, copiado a la ESP como `\kernel.sig`) y
+el bootloader verifica esa firma antes de cargar el ELF; esta guía refleja ese
+comportamiento en construcción, arranque y QA.
+
+T1.2 (Fase 1) añade el servicio de bloques sobre virtio-blk: `tools/build.sh`
+genera `build/blocktest.img` (1 MiB) y `tools/run.sh` lo conecta como segundo
+disco virtio-blk en `00:03.0`. Durante el arranque las auto-pruebas leen el
+sector 1 del disco de arranque (EFI PART), escriben/leen los sectores 0 y 1 del
+disco QA y comprueban que una capacidad sin `WRITE` no puede escribir.
+
+T1.3 (Fase 1) añade el sistema de objetos en disco sobre ese mismo disco QA:
+superblocks duplicados con generación y SHA-256, B+ tree de fanout 8
+(hasta 64 objetos), extents de hasta 4096 bytes, copy-on-write y verificación
+de hashes. Las auto-pruebas formatean el disco, confirman que un commit no
+sobrescribe nodos vivos, simulan un corte de energía antes del commit y
+comprueban que la corrupción de un dato, un nodo o un superblock se detecta.
+
+T1.5 (Fase 1) añade el volumen cifrado sobre ese sistema de objetos: cada
+objeto de usuario viaja en un frame `MRDVOBJ1` autenticado con SHA-256 y se
+cifra por completo con XTS-AES-256 antes de escribirse, de modo que el hash del
+ObjectStore cubre ciphertext y no plaintext. La clave XTS de 64 bytes se deriva
+con Argon2id (2 iteraciones, 1 lane, 8 KiB) a partir de una passphrase; el
+objeto 0 guarda la cabecera `MRDVOL01` (versión, parámetros KDF, sal y su
+checksum) y el objeto 1 un verificador cifrado que permite rechazar passphrases
+incorrectas con `WrongKey`. El tweak es `LE64(object_key) || "MRDVOL01"`: no
+incluye el LBA porque el commit COW puede cambiarlo, ni la clave porque el
+tweak es público. Las auto-pruebas formatean el volumen, escriben un payload
+conocido, verifican que una clave errónea se rechaza, que `raw_read` devuelve
+ciphertext distinto del plaintext (y que su corrupción se detecta), y que el
+dato sobrevive a un segundo `open` sin formatear.
+
+La passphrase embebida (`meridian-alpha-volume-key-v1`) y la sal determinista
+derivada de `sha256(b"meridian-volume-dev-salt-v1")` son **solo de desarrollo y
+QA**. En producción la passphrase debe venir de una fuente segura y la sal debe
+ser aleatoria por volumen y persistirse en la cabecera.
+
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
 auto-pruebas scriptadas durante el arranque**. Esto se documenta en detalle en
@@ -44,6 +81,7 @@ Variables opcionales:
 | `MERIDIAN_MEMORY` | memoria de la VM | `512M` |
 | `MERIDIAN_QEMU_DISPLAY` | opción `-display` de QEMU | `none` |
 | `CARGO_PROFILE` | perfil de Cargo | `release` |
+| `MERIDIAN_KERNEL_SIGNING_KEY` | clave privada Ed25519 (hex, 64 bytes) con la que se firma `kernel.elf` | clave de desarrollo (solo desarrollo) |
 
 ## 3. Construcción
 
@@ -56,8 +94,15 @@ Genera:
 ```
 build/bootloader.efi     # aplicación UEFI
 build/kernel.elf         # kernel bare-metal
-build/meridian.img       # GPT + ESP FAT32 con EFI/BOOT/BOOTX64.EFI y kernel.elf
+build/kernel.sig         # firma Ed25519 de kernel.elf (64 bytes en bruto)
+build/meridian.img       # GPT + ESP FAT32 con EFI/BOOT/BOOTX64.EFI, kernel.elf y kernel.sig
 ```
+
+La firma se calcula sobre el contenido íntegro de `kernel.elf` con la clave
+privada de `MERIDIAN_KERNEL_SIGNING_KEY` o, si no está definida, con la clave
+de desarrollo (RFC 8032 TEST 1, solo para desarrollo). El bootloader verifica
+`\kernel.sig` antes de cargar el ELF y aborta con `SECURITY_VIOLATION` si es
+inválida o ausente (T1.1, ver `docs/boot.md`).
 
 ## 4. Arranque
 
@@ -76,12 +121,14 @@ build/screen.ppm     # captura GOP
 build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
-Devuelve `0` cuando ve todos los marcadores `A4`–`A9` y devuelve `1` si falta
-alguno o aparece un marcador `FAIL`. Opciones útiles:
+Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`
+y COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3` y `T1.5`;
+devuelve `1` si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
 tools/run.sh --no-screenshot
+tools/run.sh --expect-signature-reject   # exige rechazo de firma (QA T1.1)
 MERIDIAN_QEMU_DISPLAY=gtk tools/run.sh
 ```
 
@@ -95,12 +142,18 @@ Este comando hace todo lo anterior y además verifica explícitamente por COM1:
 
 1. que el login se muestra y autentica (A8);
 2. que la terminal exige login y ejecuta **todos** los comandos de A9;
-3. que no hay marcadores `A4`–`A9` con `FAIL`.
+3. que el servicio de bloques detecta dos discos, configura la cola, lee,
+   escribe y verifica capacidades (T1.2);
+4. que el sistema de objetos en disco pasa formato, COW, corte simulado y
+   detección de corrupción por checksum (T1.3);
+5. que el volumen cifrado pasa formato, rechazo de clave errónea, ciphertext en
+   crudo y persistencia tras `open` (T1.5);
+6. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3` ni `T1.5` con `FAIL`.
 
 Salida esperada al final:
 
 ```
-[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (40/40 marcadores; 40 esperados)
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (56/56 marcadores; 56 esperados)
 ```
 
 Si falla, imprime los marcadores ausentes y la ruta a `build/serial.log`.
@@ -113,6 +166,17 @@ tests/run-alpha.sh --no-screenshot
 ```
 
 Los logs completos quedan en `build/alpha-build.log` y `build/alpha-run.log`.
+
+QA adicional de la firma del kernel (T1.1, fuera del alcance de la Alpha):
+
+```bash
+tests/run-signature.sh
+```
+
+Construye una imagen aislada en `build-signature-test`, corrompe `\kernel.sig`
+dentro de la ESP y usa `tools/run.sh --expect-signature-reject`; pasa solo si
+el bootloader aborta con un marcador de rechazo y en COM1 **no** aparece
+`Meridian booting`. Ver `docs/boot.md`.
 
 ## 6. Uso de la terminal (demo scriptada)
 
@@ -184,6 +248,11 @@ la VM.
   usa directamente `tests/run-alpha.sh`.
 - **Falta un marcador:** abre `build/serial.log`; los mensajes `FAIL` indican
   qué auto-prueba falló. `build/qemu.log` contiene errores de QEMU.
+- **Falta el marcador de firma:** `build/debugcon.log` debe contener
+  `meridian: firma de kernel verificada`. Si aparece
+  `meridian: firma de kernel inválida; abortando` o
+  `meridian: firma de kernel ausente; abortando`, comprueba que `\kernel.sig`
+  corresponde a `\kernel.elf` y a la clave pública embebida en el bootloader.
 - **Timeout:** usa `MERIDIAN_TIMEOUT=90 tests/run-alpha.sh` en máquinas lentas.
 - **Pantalla en blanco en `screen.png`:** comprueba que el firmware encontró
   GOP en `build/debugcon.log` y que la resolución seleccionada es válida.

@@ -43,8 +43,13 @@ dependencies = [
  "font8x8",
  "log",
  "meridian-bootinfo",
+ "meridian-crypto",
  "uefi",
 ]
+
+[[package]]
+name = "meridian-crypto"
+version = "0.1.0"
 
 [[package]]
 name = "meridian-kernel"
@@ -52,6 +57,7 @@ version = "0.1.0"
 dependencies = [
  "font8x8",
  "meridian-bootinfo",
+ "meridian-crypto",
 ]
 
 [[package]]
