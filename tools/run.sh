@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A9, T1.1-T1.3).
+# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A9, T1.1-T1.5).
 #
 # Por defecto se ejecuta sin ventana (`-display none`), guarda la salida serie,
 # el debugcon y una captura de pantalla (`screendump`) para poder verificar el
@@ -36,11 +36,16 @@
 #   T1.3: crash consistency PASS
 #   T1.3: checksum detects corruption PASS
 #   T1.3: disk object tests PASS
+#   T1.5: encrypted volume format PASS
+#   T1.5: wrong key rejected PASS
+#   T1.5: raw sectors are ciphertext PASS
+#   T1.5: persists after reopen PASS
+#   T1.5: volume encryption tests PASS
 # El debugcon del bootloader también debe contener:
 #   meridian: firma de kernel verificada
 # En modo --expect-signature-reject se exige en cambio el rechazo y ausencia de
 # "Meridian booting" en COM1.
-# Cualquier marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3 ... FAIL" hace fallar el script.
+# Cualquier marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5 ... FAIL" hace fallar el script.
 #
 # Uso:
 #   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot] [--expect-signature-reject]
@@ -90,7 +95,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,51p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,56p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -200,6 +205,11 @@ t13_cow_ok=0
 t13_crash_ok=0
 t13_checksum_ok=0
 t13_summary_ok=0
+t15_format_ok=0
+t15_wrong_key_ok=0
+t15_raw_ok=0
+t15_reopen_ok=0
+t15_summary_ok=0
 fail_marker=0
 while (( SECONDS < deadline )); do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -238,7 +248,12 @@ while (( SECONDS < deadline )); do
         if grep -q "T1.3: crash consistency PASS" "$SERIAL_LOG"; then t13_crash_ok=1; fi
         if grep -q "T1.3: checksum detects corruption PASS" "$SERIAL_LOG"; then t13_checksum_ok=1; fi
         if grep -q "T1.3: disk object tests PASS" "$SERIAL_LOG"; then t13_summary_ok=1; fi
-        if grep -Eq "A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL" "$SERIAL_LOG"; then
+        if grep -q "T1.5: encrypted volume format PASS" "$SERIAL_LOG"; then t15_format_ok=1; fi
+        if grep -q "T1.5: wrong key rejected PASS" "$SERIAL_LOG"; then t15_wrong_key_ok=1; fi
+        if grep -q "T1.5: raw sectors are ciphertext PASS" "$SERIAL_LOG"; then t15_raw_ok=1; fi
+        if grep -q "T1.5: persists after reopen PASS" "$SERIAL_LOG"; then t15_reopen_ok=1; fi
+        if grep -q "T1.5: volume encryption tests PASS" "$SERIAL_LOG"; then t15_summary_ok=1; fi
+        if grep -Eq "A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL" "$SERIAL_LOG"; then
             fail_marker=1
             break
         fi
@@ -262,6 +277,7 @@ while (( SECONDS < deadline )); do
             && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok \
             && t12_detect_ok && t12_queue_ok && t12_read_ok && t12_write_ok && t12_cap_ok && t12_summary_ok \
             && t13_format_ok && t13_cow_ok && t13_crash_ok && t13_checksum_ok && t13_summary_ok \
+            && t15_format_ok && t15_wrong_key_ok && t15_raw_ok && t15_reopen_ok && t15_summary_ok \
             && signature_ok )); then
         break
     fi
@@ -312,7 +328,7 @@ fi
 
 echo
 if (( fail_marker )); then
-    log "FALLO: el kernel reportó un marcador 'A4/A5/A6/A7/A8/A9/T1.2/T1.3 ... FAIL' (ver COM1)."
+    log "FALLO: el kernel reportó un marcador 'A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5 ... FAIL' (ver COM1)."
     exit 1
 fi
 
@@ -336,8 +352,9 @@ if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
       && a8_screen_ok && a8_reject_ok && a8_caps_ok && a8_summary_ok \
       && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok \
       && t12_detect_ok && t12_queue_ok && t12_read_ok && t12_write_ok && t12_cap_ok && t12_summary_ok \
-      && t13_format_ok && t13_cow_ok && t13_crash_ok && t13_checksum_ok && t13_summary_ok )); then
-    log "OK: firma verificada; kernel arrancó ('Meridian booting') y pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios), A9 (terminal alpha), T1.2 (block service) y T1.3 (disk objects: COW/checksums/corte simulado) por COM1."
+      && t13_format_ok && t13_cow_ok && t13_crash_ok && t13_checksum_ok && t13_summary_ok \
+      && t15_format_ok && t15_wrong_key_ok && t15_raw_ok && t15_reopen_ok && t15_summary_ok )); then
+    log "OK: firma verificada; kernel arrancó ('Meridian booting') y pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios), A9 (terminal alpha), T1.2 (block service), T1.3 (disk objects: COW/checksums/corte simulado) y T1.5 (volume encryption: XTS/Argon2id, wrong key, ciphertext y persistencia) por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -348,7 +365,7 @@ if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
     exit 0
 fi
 
-log "FALLO: marcadores pendientes (firma=$signature_ok, reject=$signature_reject_ok, boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok, t12_detect=$t12_detect_ok, t12_queue=$t12_queue_ok, t12_read=$t12_read_ok, t12_write=$t12_write_ok, t12_cap=$t12_cap_ok, t12_summary=$t12_summary_ok, t13_format=$t13_format_ok, t13_cow=$t13_cow_ok, t13_crash=$t13_crash_ok, t13_checksum=$t13_checksum_ok, t13_summary=$t13_summary_ok)."
+log "FALLO: marcadores pendientes (firma=$signature_ok, reject=$signature_reject_ok, boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok, t12_detect=$t12_detect_ok, t12_queue=$t12_queue_ok, t12_read=$t12_read_ok, t12_write=$t12_write_ok, t12_cap=$t12_cap_ok, t12_summary=$t12_summary_ok, t13_format=$t13_format_ok, t13_cow=$t13_cow_ok, t13_crash=$t13_crash_ok, t13_checksum=$t13_checksum_ok, t13_summary=$t13_summary_ok, t15_format=$t15_format_ok, t15_wrong_key=$t15_wrong_key_ok, t15_raw=$t15_raw_ok, t15_reopen=$t15_reopen_ok, t15_summary=$t15_summary_ok)."
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"
