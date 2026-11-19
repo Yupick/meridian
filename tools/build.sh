@@ -29,6 +29,7 @@ PART_IMAGE="$BUILD_DIR/esp-part.img"
 BOOTLOADER_EFI="$BUILD_DIR/bootloader.efi"
 KERNEL_ELF="$BUILD_DIR/kernel.elf"
 KERNEL_SIG="$BUILD_DIR/kernel.sig"
+BLOCKTEST_IMAGE="$BUILD_DIR/blocktest.img"
 
 # Imagen de 96 MiB; la ESP empieza en el sector 2048 (1 MiB) y ocupa 64 MiB.
 # Se deja el resto libre para la GPT de respaldo y futuras particiones.
@@ -134,8 +135,12 @@ log "insertando la ESP en la imagen GPT (offset $((PART_START_SECTOR * 512)) byt
 dd if="$PART_IMAGE" of="$IMAGE" bs=1M seek=1 conv=notrunc status=none
 rm -f "$PART_IMAGE"
 
+log "creando imagen de bloque de prueba de 1 MiB"
+dd if=/dev/zero of="$BLOCKTEST_IMAGE" bs=1M count=1 status=none
+
 log "imagen lista: $IMAGE"
 printf '       bootloader: %s (%s bytes)\n' "$BOOTLOADER_EFI" "$(stat -c %s "$BOOTLOADER_EFI")"
 printf '       kernel:     %s (%s bytes)\n' "$KERNEL_ELF" "$(stat -c %s "$KERNEL_ELF")"
 printf '       firma:      %s (%s bytes)\n' "$KERNEL_SIG" "$(stat -c %s "$KERNEL_SIG")"
 printf '       imagen:     %s (%s bytes)\n' "$IMAGE" "$(stat -c %s "$IMAGE")"
+printf '   blocktest:      %s (%s bytes)\n' "$BLOCKTEST_IMAGE" "$(stat -c %s "$BLOCKTEST_IMAGE")"

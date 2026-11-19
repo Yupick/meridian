@@ -121,6 +121,12 @@ REQUIRED_MARKERS=(
     "A9: exit PASS"
     "A9: command script PASS (ls,cd,pwd,mkdir,md,rmdir,rd,rm,rm -r,cat,echo>,help,clear,exit)"
     "A9: terminal tests PASS (scripted commands, rmdir non-empty error, login required)"
+    "T1.2: virtio-blk detect PASS"
+    "T1.2: virtqueue setup PASS"
+    "T1.2: sector read PASS"
+    "T1.2: write/readback PASS"
+    "T1.2: capability denied without WRITE PASS"
+    "T1.2: block service tests PASS"
 )
 
 log "verificando ${#REQUIRED_MARKERS[@]} marcadores en COM1"
@@ -135,7 +141,7 @@ for marker in "${REQUIRED_MARKERS[@]}"; do
 done
 (( missing == 0 )) || fail "faltan $missing marcadores de Alpha en $SERIAL_LOG"
 
-if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL' "$SERIAL_LOG"; then
+if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL' "$SERIAL_LOG"; then
     fail "el kernel reportó un marcador FAIL (ver $SERIAL_LOG)"
 fi
 

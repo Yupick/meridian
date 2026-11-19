@@ -1,6 +1,7 @@
 # Artefactos de construcción
 /target/
 /build/
+/build-signature-test/
 /out/
 *.img
 *.iso
