@@ -19,6 +19,11 @@ pub const VENDOR_VIRTIO: u16 = 0x1AF4;
 pub const DEVICE_VIRTIO_BLK_LEGACY: u16 = 0x1001;
 /// Device ID de virtio-blk moderno.
 pub const DEVICE_VIRTIO_BLK_MODERN: u16 = 0x1042;
+/// Device ID de virtio-net transicional.
+pub const DEVICE_VIRTIO_NET_LEGACY: u16 = 0x1000;
+/// Device ID de virtio-net moderno (no soportado en T2.1; se detecta para
+/// informar explícitamente y no confundir con virtio-blk).
+pub const DEVICE_VIRTIO_NET_MODERN: u16 = 0x1040;
 
 /// I/O Space | Memory Space | Bus Master | Interrupt Disable.
 const COMMAND_ENABLE: u32 = 0x0407;
@@ -46,6 +51,22 @@ pub struct VirtioBlkDevice {
     pub vendor: u16,
     pub device: u16,
     pub io_base: u16,
+    pub bars: [u64; 6],
+}
+
+/// Dispositivo virtio-net descubierto, con sus BARs decodificadas.
+///
+/// Usa el mismo esquema que virtio-blk: `io_base` para transicionales y
+/// `bars[i]` para bases MMIO cuando corresponda. En T2.1 el transporte
+/// soportado es el transicional por I/O ports (`1af4:1000`, `disable-modern=on`).
+#[derive(Clone, Copy, Debug)]
+pub struct VirtioNetDevice {
+    pub bdf: Bdf,
+    #[allow(dead_code)]
+    pub vendor: u16,
+    pub device: u16,
+    pub io_base: u16,
+    #[allow(dead_code)]
     pub bars: [u64; 6],
 }
 
@@ -136,7 +157,7 @@ fn enable_device(bdf: Bdf) {
 /// [`crate::mm::paging::identity_map_mmio`], incluidas las de más de 4 GiB,
 /// solo cuando `map_mmio` es `true` (ruta moderna). Los dispositivos
 /// transicionales usan I/O ports y no necesitan tocar el MMIO alto.
-fn decode_bars(bdf: Bdf, map_mmio: bool) -> Result<(u16, [u64; 6]), &'static str> {
+pub(crate) fn decode_bars(bdf: Bdf, map_mmio: bool) -> Result<(u16, [u64; 6]), &'static str> {
     const MMIO_MAP_LEN: u64 = 2 * 1024 * 1024;
 
     let bar0_raw = read_bdf(bdf, 0x10);
@@ -206,6 +227,23 @@ fn is_virtio_blk(bdf: Bdf) -> Option<(u16, u16)> {
     Some((vendor, device))
 }
 
+/// Comprueba si el BDF corresponde a un dispositivo virtio-net.
+fn is_virtio_net(bdf: Bdf) -> Option<(u16, u16)> {
+    let ids = read_bdf(bdf, 0x00);
+    let vendor = (ids & 0xFFFF) as u16;
+    let device = (ids >> 16) as u16;
+    if vendor != VENDOR_VIRTIO {
+        return None;
+    }
+    if device == DEVICE_VIRTIO_NET_LEGACY
+        || device == DEVICE_VIRTIO_NET_MODERN
+        || device == DEVICE_VIRTIO_NET_MODERN + 1
+    {
+        return Some((vendor, device));
+    }
+    None
+}
+
 /// Escanea el bus 0 y devuelve hasta dos dispositivos virtio-blk.
 ///
 /// El primero encontrado (menor slot/función) es el disco de arranque (id 0) y
@@ -267,4 +305,50 @@ pub fn scan_virtio_blk() -> Result<([Option<VirtioBlkDevice>; 2], usize), &'stat
     }
 
     Ok((found, count))
+}
+
+/// Escanea el bus 0 y devuelve el primer dispositivo virtio-net encontrado.
+///
+/// T2.1 usa el transporte transicional por I/O ports, así que las BARs se
+/// decodifican con `map_mmio=false`.
+pub fn scan_virtio_net() -> Result<Option<VirtioNetDevice>, &'static str> {
+    for slot in 0u8..32 {
+        let base = Bdf {
+            bus: 0,
+            slot,
+            func: 0,
+        };
+        if let Some((vendor, device)) = is_virtio_net(base) {
+            enable_device(base);
+            let (io_base, bars) = decode_bars(base, false)?;
+            return Ok(Some(VirtioNetDevice {
+                bdf: base,
+                vendor,
+                device,
+                io_base,
+                bars,
+            }));
+        }
+
+        let header_type = (read_bdf(base, 0x0C) >> 16) as u8;
+        if header_type & 0x80 == 0 {
+            continue;
+        }
+        for func in 1u8..8 {
+            let bdf = Bdf { bus: 0, slot, func };
+            let Some((vendor, device)) = is_virtio_net(bdf) else {
+                continue;
+            };
+            enable_device(bdf);
+            let (io_base, bars) = decode_bars(bdf, false)?;
+            return Ok(Some(VirtioNetDevice {
+                bdf,
+                vendor,
+                device,
+                io_base,
+                bars,
+            }));
+        }
+    }
+    Ok(None)
 }

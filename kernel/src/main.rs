@@ -1,7 +1,8 @@
 //! Kernel de Meridian — consola (A3), memoria/paginación (A4), procesos
 //! aislados (A5), IPC/capacidades (A6), servicio de archivos RAM (A7),
 //! login/usuarios (A8), terminal alpha (A9), servicio de bloques (T1.2),
-//! objetos en disco con copy-on-write (T1.3) y volumen cifrado (T1.5).
+//! objetos en disco con copy-on-write (T1.3), volumen cifrado (T1.5)
+//! y pila de red sobre virtio-net (T2.1).
 
 #![no_main]
 #![no_std]
@@ -37,6 +38,9 @@ mod obj;
 // Volumen cifrado XTS-AES-256 con clave Argon2id sobre objetos (T1.5).
 #[path = "../../services/vol/mod.rs"]
 mod vol;
+// Pila de red sobre virtio-net (T2.1).
+#[path = "../../services/net/mod.rs"]
+mod net;
 // Servicio de archivos en memoria (A7).
 #[path = "../../services/fs/mod.rs"]
 mod fs;
@@ -191,6 +195,12 @@ extern "sysv64" fn kernel_main() -> ! {
         t15_fatal(&mut console);
     }
 
+    // --- T2.1: pila de red sobre virtio-net -------------------------------
+    console.println("");
+    if !net::selftest::run(&mut console) {
+        t21_fatal(&mut console);
+    }
+
     // --- A5: procesos y aislamiento de espacios de direcciones ------------
     console.println("");
     if !proc::selftest::run(&mut console) {
@@ -277,6 +287,12 @@ fn t13_fatal(console: &mut Console) -> ! {
 fn t15_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "T1.5: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn t21_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "T2.1: SELFTEST FAILED - halting CPU");
     halt()
 }
 

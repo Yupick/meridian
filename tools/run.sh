@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A9, T1.1-T1.5).
+# tools/run.sh — Arranca la imagen de Meridian en QEMU con OVMF (A2-A9, T1.1-T1.5, T2.1).
 #
 # Por defecto se ejecuta sin ventana (`-display none`), guarda la salida serie,
 # el debugcon y una captura de pantalla (`screendump`) para poder verificar el
@@ -41,11 +41,29 @@
 #   T1.5: raw sectors are ciphertext PASS
 #   T1.5: persists after reopen PASS
 #   T1.5: volume encryption tests PASS
+#   T2.1: virtio-net detect PASS
+#   T2.1: ethernet framing PASS
+#   T2.1: ARP reply PASS
+#   T2.1: IPv4 ICMP ping reply PASS
+#   T2.1: UDP echo reply PASS
+#   T2.1: TCP handshake PASS
+#   T2.1: IPv6 ICMPv6 echo PASS
+#   T2.1: network stack tests PASS
 # El debugcon del bootloader también debe contener:
 #   meridian: firma de kernel verificada
 # En modo --expect-signature-reject se exige en cambio el rechazo y ausencia de
 # "Meridian booting" en COM1.
-# Cualquier marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5 ... FAIL" hace fallar el script.
+# Cualquier marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5/T2.1 ... FAIL" hace fallar el script.
+#
+# T2.1 usa un backend UDP QEMU (`-netdev dgram`) para tráfico Ethernet real
+# host<->guest sin TAP/root. `tools/net-peer.py` se arranca en background antes
+# de QEMU y debe registrar en `build/net-peer.log`:
+#   NETPEER: ARP reply PASS
+#   NETPEER: ICMP echo reply PASS
+#   NETPEER: UDP echo reply PASS
+#   NETPEER: TCP SYN-ACK PASS
+#   NETPEER: TCP ACK sent PASS
+#   NETPEER: ICMPv6 echo reply PASS
 #
 # Uso:
 #   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot] [--expect-signature-reject]
@@ -75,6 +93,9 @@ MONITOR="$BUILD_DIR/qemu-monitor.sock"
 SCREEN_PPM="$BUILD_DIR/screen.ppm"
 SCREEN_PNG="$BUILD_DIR/screen.png"
 OVMF_VARS="$BUILD_DIR/OVMF_VARS_4M.fd"
+NETPEER_LOG="$BUILD_DIR/net-peer.log"
+NETPEER_STDOUT="$BUILD_DIR/net-peer.stdout"
+NETPEER_STDERR="$BUILD_DIR/net-peer.stderr"
 
 log()  { printf '[run] %s\n' "$*"; }
 fail() { printf '[run] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -95,7 +116,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,56p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,75p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -106,6 +127,7 @@ done
 
 command -v qemu-system-x86_64 >/dev/null 2>&1 || fail "qemu-system-x86_64 no está instalado"
 command -v socat >/dev/null 2>&1 || fail "socat no está instalado (necesario para el monitor QEMU)"
+command -v python3 >/dev/null 2>&1 || fail "python3 no está instalado (necesario para el peer T2.1)"
 [[ -f "$IMAGE" ]] || fail "no existe $IMAGE; ejecuta tools/build.sh primero"
 [[ -f "$BLOCKTEST_IMAGE" ]] || fail "no existe $BLOCKTEST_IMAGE; ejecuta tools/build.sh primero"
 
@@ -128,7 +150,7 @@ done
 [[ -n "$OVMF_VARS_TEMPLATE" ]] || fail "no se encontró OVMF_VARS en /usr/share/OVMF/"
 
 mkdir -p "$BUILD_DIR"
-rm -f "$SERIAL_LOG" "$DEBUG_LOG" "$QEMU_LOG" "$MONITOR" "$SCREEN_PPM" "$SCREEN_PNG"
+rm -f "$SERIAL_LOG" "$DEBUG_LOG" "$QEMU_LOG" "$MONITOR" "$SCREEN_PPM" "$SCREEN_PNG" "$NETPEER_LOG" "$NETPEER_STDOUT" "$NETPEER_STDERR"
 cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
 
 ACCEL=()
@@ -137,10 +159,15 @@ if [[ -w /dev/kvm ]]; then
 fi
 
 QEMU_PID=""
+NETPEER_PID=""
 cleanup() {
     if [[ -n "$QEMU_PID" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
         kill "$QEMU_PID" 2>/dev/null || true
         wait "$QEMU_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$NETPEER_PID" ]] && kill -0 "$NETPEER_PID" 2>/dev/null; then
+        kill "$NETPEER_PID" 2>/dev/null || true
+        wait "$NETPEER_PID" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
@@ -148,6 +175,17 @@ trap cleanup EXIT
 log "firmware: $OVMF_CODE"
 log "imagen:   $IMAGE"
 log "timeout:  ${TIMEOUT}s"
+
+# Peer T2.1: recibe frames del guest en 55124 y envía al guest en 55125.
+if (( !EXPECT_SIGNATURE_REJECT )); then
+    python3 "$ROOT/tools/net-peer.py" \
+        --bind-port 55124 --peer-port 55125 \
+        --log "$NETPEER_LOG" \
+        >"$NETPEER_STDOUT" 2>"$NETPEER_STDERR" &
+    NETPEER_PID=$!
+    log "net-peer PID $NETPEER_PID (log: $NETPEER_LOG)"
+    sleep 0.2
+fi
 
 qemu-system-x86_64 \
     -machine q35 \
@@ -158,9 +196,10 @@ qemu-system-x86_64 \
     -drive "file=$IMAGE,format=raw,if=virtio" \
     -drive "file=$BLOCKTEST_IMAGE,format=raw,if=none,id=blockqa" \
     -device "virtio-blk-pci,drive=blockqa,addr=03.0" \
+    -netdev dgram,id=netqa,local.type=inet,local.host=127.0.0.1,local.port=55125,remote.type=inet,remote.host=127.0.0.1,remote.port=55124 \
+    -device "virtio-net-pci,disable-modern=on,netdev=netqa,mac=52:54:00:00:00:15,addr=04.0" \
     -vga std \
     -display "$QEMU_DISPLAY" \
-    -net none \
     -no-reboot \
     -serial "file:$SERIAL_LOG" \
     -debugcon "file:$DEBUG_LOG" \
@@ -210,6 +249,14 @@ t15_wrong_key_ok=0
 t15_raw_ok=0
 t15_reopen_ok=0
 t15_summary_ok=0
+t21_detect_ok=0
+t21_eth_ok=0
+t21_arp_ok=0
+t21_icmp_ok=0
+t21_udp_ok=0
+t21_tcp_ok=0
+t21_icmpv6_ok=0
+t21_summary_ok=0
 fail_marker=0
 while (( SECONDS < deadline )); do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -253,7 +300,15 @@ while (( SECONDS < deadline )); do
         if grep -q "T1.5: raw sectors are ciphertext PASS" "$SERIAL_LOG"; then t15_raw_ok=1; fi
         if grep -q "T1.5: persists after reopen PASS" "$SERIAL_LOG"; then t15_reopen_ok=1; fi
         if grep -q "T1.5: volume encryption tests PASS" "$SERIAL_LOG"; then t15_summary_ok=1; fi
-        if grep -Eq "A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL" "$SERIAL_LOG"; then
+        if grep -q "T2.1: virtio-net detect PASS" "$SERIAL_LOG"; then t21_detect_ok=1; fi
+        if grep -q "T2.1: ethernet framing PASS" "$SERIAL_LOG"; then t21_eth_ok=1; fi
+        if grep -q "T2.1: ARP reply PASS" "$SERIAL_LOG"; then t21_arp_ok=1; fi
+        if grep -q "T2.1: IPv4 ICMP ping reply PASS" "$SERIAL_LOG"; then t21_icmp_ok=1; fi
+        if grep -q "T2.1: UDP echo reply PASS" "$SERIAL_LOG"; then t21_udp_ok=1; fi
+        if grep -q "T2.1: TCP handshake PASS" "$SERIAL_LOG"; then t21_tcp_ok=1; fi
+        if grep -q "T2.1: IPv6 ICMPv6 echo PASS" "$SERIAL_LOG"; then t21_icmpv6_ok=1; fi
+        if grep -q "T2.1: network stack tests PASS" "$SERIAL_LOG"; then t21_summary_ok=1; fi
+        if grep -Eq "A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL|T2\.1: .*FAIL" "$SERIAL_LOG"; then
             fail_marker=1
             break
         fi
@@ -278,6 +333,7 @@ while (( SECONDS < deadline )); do
             && t12_detect_ok && t12_queue_ok && t12_read_ok && t12_write_ok && t12_cap_ok && t12_summary_ok \
             && t13_format_ok && t13_cow_ok && t13_crash_ok && t13_checksum_ok && t13_summary_ok \
             && t15_format_ok && t15_wrong_key_ok && t15_raw_ok && t15_reopen_ok && t15_summary_ok \
+            && t21_detect_ok && t21_eth_ok && t21_arp_ok && t21_icmp_ok && t21_udp_ok && t21_tcp_ok && t21_icmpv6_ok && t21_summary_ok \
             && signature_ok )); then
         break
     fi
@@ -310,6 +366,41 @@ fi
 wait "$QEMU_PID" 2>/dev/null || true
 QEMU_PID=""
 
+# Esperar al peer T2.1 y comprobar su log (tráfico real host<->guest).
+peer_ok=1
+if (( !EXPECT_SIGNATURE_REJECT )); then
+    peer_wait_deadline=$((SECONDS + 5))
+    while (( SECONDS < peer_wait_deadline )); do
+        if [[ -n "$NETPEER_PID" ]] && kill -0 "$NETPEER_PID" 2>/dev/null; then
+            sleep 0.2
+        else
+            break
+        fi
+    done
+    if [[ -n "$NETPEER_PID" ]] && kill -0 "$NETPEER_PID" 2>/dev/null; then
+        kill "$NETPEER_PID" 2>/dev/null || true
+        wait "$NETPEER_PID" 2>/dev/null || true
+    else
+        wait "$NETPEER_PID" 2>/dev/null || true
+    fi
+    NETPEER_PID=""
+    for line in \
+        "NETPEER: ARP reply PASS" \
+        "NETPEER: ICMP echo reply PASS" \
+        "NETPEER: UDP echo reply PASS" \
+        "NETPEER: TCP SYN-ACK PASS" \
+        "NETPEER: TCP ACK sent PASS" \
+        "NETPEER: ICMPv6 echo reply PASS"; do
+        if ! grep -Fq "$line" "$NETPEER_LOG" 2>/dev/null; then
+            peer_ok=0
+            log "FALLO peer: falta '$line' en $NETPEER_LOG"
+        fi
+    done
+    if (( peer_ok )); then
+        log "net-peer: 6/6 eventos PASS ($NETPEER_LOG)"
+    fi
+fi
+
 echo
 log "--- COM1 (kernel) ---"
 if [[ -s "$SERIAL_LOG" ]]; then
@@ -328,7 +419,7 @@ fi
 
 echo
 if (( fail_marker )); then
-    log "FALLO: el kernel reportó un marcador 'A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5 ... FAIL' (ver COM1)."
+    log "FALLO: el kernel reportó un marcador 'A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5/T2.1 ... FAIL' (ver COM1)."
     exit 1
 fi
 
@@ -345,6 +436,18 @@ if (( EXPECT_SIGNATURE_REJECT )); then
     exit 1
 fi
 
+if (( !peer_ok )); then
+    if [[ -s "$NETPEER_STDERR" ]]; then
+        log "--- net-peer stderr ---"
+        cat "$NETPEER_STDERR"
+    fi
+    if [[ -s "$NETPEER_LOG" ]]; then
+        log "--- net-peer log ---"
+        cat "$NETPEER_LOG"
+    fi
+    exit 1
+fi
+
 if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
       && a5_create_ok && a5_isolation_ok \
       && a6_ipc_ok && a6_denied_ok && a6_reduce_ok && a6_summary_ok \
@@ -353,8 +456,9 @@ if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
       && a9_access_ok && a9_script_ok && a9_rmdir_nonempty_ok && a9_summary_ok \
       && t12_detect_ok && t12_queue_ok && t12_read_ok && t12_write_ok && t12_cap_ok && t12_summary_ok \
       && t13_format_ok && t13_cow_ok && t13_crash_ok && t13_checksum_ok && t13_summary_ok \
-      && t15_format_ok && t15_wrong_key_ok && t15_raw_ok && t15_reopen_ok && t15_summary_ok )); then
-    log "OK: firma verificada; kernel arrancó ('Meridian booting') y pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios), A9 (terminal alpha), T1.2 (block service), T1.3 (disk objects: COW/checksums/corte simulado) y T1.5 (volume encryption: XTS/Argon2id, wrong key, ciphertext y persistencia) por COM1."
+      && t15_format_ok && t15_wrong_key_ok && t15_raw_ok && t15_reopen_ok && t15_summary_ok \
+      && t21_detect_ok && t21_eth_ok && t21_arp_ok && t21_icmp_ok && t21_udp_ok && t21_tcp_ok && t21_icmpv6_ok && t21_summary_ok )); then
+    log "OK: firma verificada; kernel arrancó ('Meridian booting') y pasó A4, A5 (aislamiento de procesos), A6 (IPC/capacidades), A7 (sistema de archivos RAM), A8 (login/usuarios), A9 (terminal alpha), T1.2 (block service), T1.3 (disk objects: COW/checksums/corte simulado), T1.5 (volume encryption: XTS/Argon2id, wrong key, ciphertext y persistencia) y T2.1 (network stack: virtio-net, ARP/IPv4 ICMP/UDP/TCP/IPv6 ICMPv6 con tráfico real host<->guest) por COM1."
     if (( TAKE_SCREENSHOT )); then
         if [[ -f "$SCREEN_PNG" ]]; then
             log "Captura de pantalla GOP: $SCREEN_PNG"
@@ -365,7 +469,11 @@ if (( !signature_reject_ok && signature_ok && boot_ok && buddy_ok && wx_ok \
     exit 0
 fi
 
-log "FALLO: marcadores pendientes (firma=$signature_ok, reject=$signature_reject_ok, boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok, t12_detect=$t12_detect_ok, t12_queue=$t12_queue_ok, t12_read=$t12_read_ok, t12_write=$t12_write_ok, t12_cap=$t12_cap_ok, t12_summary=$t12_summary_ok, t13_format=$t13_format_ok, t13_cow=$t13_cow_ok, t13_crash=$t13_crash_ok, t13_checksum=$t13_checksum_ok, t13_summary=$t13_summary_ok, t15_format=$t15_format_ok, t15_wrong_key=$t15_wrong_key_ok, t15_raw=$t15_raw_ok, t15_reopen=$t15_reopen_ok, t15_summary=$t15_summary_ok)."
+log "FALLO: marcadores pendientes (firma=$signature_ok, reject=$signature_reject_ok, boot=$boot_ok, buddy=$buddy_ok, wx=$wx_ok, a5_create=$a5_create_ok, a5_isolation=$a5_isolation_ok, a6_ipc=$a6_ipc_ok, a6_denied=$a6_denied_ok, a6_reduce=$a6_reduce_ok, a6_summary=$a6_summary_ok, a7_ops=$a7_ops_ok, a7_ro=$a7_ro_ok, a7_summary=$a7_summary_ok, a8_screen=$a8_screen_ok, a8_reject=$a8_reject_ok, a8_caps=$a8_caps_ok, a8_summary=$a8_summary_ok, a9_access=$a9_access_ok, a9_script=$a9_script_ok, a9_rmdir_nonempty=$a9_rmdir_nonempty_ok, a9_summary=$a9_summary_ok, t12_detect=$t12_detect_ok, t12_queue=$t12_queue_ok, t12_read=$t12_read_ok, t12_write=$t12_write_ok, t12_cap=$t12_cap_ok, t12_summary=$t12_summary_ok, t13_format=$t13_format_ok, t13_cow=$t13_cow_ok, t13_crash=$t13_crash_ok, t13_checksum=$t13_checksum_ok, t13_summary=$t13_summary_ok, t15_format=$t15_format_ok, t15_wrong_key=$t15_wrong_key_ok, t15_raw=$t15_raw_ok, t15_reopen=$t15_reopen_ok, t15_summary=$t15_summary_ok, t21_detect=$t21_detect_ok, t21_eth=$t21_eth_ok, t21_arp=$t21_arp_ok, t21_icmp=$t21_icmp_ok, t21_udp=$t21_udp_ok, t21_tcp=$t21_tcp_ok, t21_icmpv6=$t21_icmpv6_ok, t21_summary=$t21_summary_ok, peer=$peer_ok)."
+if [[ -s "$NETPEER_LOG" ]]; then
+    log "--- net-peer log ---"
+    cat "$NETPEER_LOG"
+fi
 if [[ -s "$QEMU_LOG" ]]; then
     log "--- log de QEMU ---"
     cat "$QEMU_LOG"

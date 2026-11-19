@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/run-alpha.sh — QA de integración de la Alpha (A10, Fase 0).
+# tests/run-alpha.sh — QA de integración de la Alpha (A10, Fase 0) + T1.x/T2.1.
 #
 # Un único comando construye Meridian, arranca la imagen en QEMU/OVMF y
 # verifica por COM1 que:
@@ -9,7 +9,8 @@
 #     help, clear y exit;
 #   - los objetos en disco con COW, checksums y corte simulado (T1.3);
 #   - el volumen cifrado XTS-AES-256/Argon2id y su persistencia (T1.5);
-#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5 ... FAIL".
+#   - la pila de red virtio-net con tráfico real host<->guest (T2.1);
+#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5/T2.1 ... FAIL".
 #
 # Devuelve 0 solo si la build, el arranque y todas las comprobaciones pasan.
 #
@@ -37,7 +38,7 @@ log()  { printf '[alpha] %s\n' "$*"; }
 fail() { printf '[alpha] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -81,7 +82,7 @@ log "arrancando QEMU/OVMF y ejecutando login + comandos A9 (ver $RUN_LOG)"
 
 [[ -s "$SERIAL_LOG" ]] || fail "no hay salida COM1 en $SERIAL_LOG"
 
-# Verificación explícita de login (A8) y de cada comando de la terminal (A9).
+# Verificación explícita de login (A8), comandos terminal (A9), T1.x y T2.1.
 REQUIRED_MARKERS=(
     "Meridian booting"
     "A4: buddy alloc/free tests PASS"
@@ -139,6 +140,14 @@ REQUIRED_MARKERS=(
     "T1.5: raw sectors are ciphertext PASS"
     "T1.5: persists after reopen PASS"
     "T1.5: volume encryption tests PASS"
+    "T2.1: virtio-net detect PASS"
+    "T2.1: ethernet framing PASS"
+    "T2.1: ARP reply PASS"
+    "T2.1: IPv4 ICMP ping reply PASS"
+    "T2.1: UDP echo reply PASS"
+    "T2.1: TCP handshake PASS"
+    "T2.1: IPv6 ICMPv6 echo PASS"
+    "T2.1: network stack tests PASS"
 )
 
 log "verificando ${#REQUIRED_MARKERS[@]} marcadores en COM1"
@@ -151,15 +160,18 @@ for marker in "${REQUIRED_MARKERS[@]}"; do
         missing=$((missing + 1))
     fi
 done
-(( missing == 0 )) || fail "faltan $missing marcadores de Alpha en $SERIAL_LOG"
+(( missing == 0 )) || fail "faltan $missing marcadores de Alpha/T2.1 en $SERIAL_LOG"
 
-if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL' "$SERIAL_LOG"; then
+if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL|T2\.1: .*FAIL' "$SERIAL_LOG"; then
     fail "el kernel reportó un marcador FAIL (ver $SERIAL_LOG)"
 fi
 
 log "OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (${#REQUIRED_MARKERS[@]}/${#REQUIRED_MARKERS[@]} marcadores; ${#REQUIRED_MARKERS[@]} esperados)"
 log "Serial: $SERIAL_LOG"
 log "Logs:   $BUILD_LOG, $RUN_LOG"
+if [[ -f "$BUILD_DIR/net-peer.log" ]]; then
+    log "Net peer: $BUILD_DIR/net-peer.log"
+fi
 if [[ -f "$BUILD_DIR/screen.png" ]]; then
     log "GOP:    $BUILD_DIR/screen.png"
 fi
