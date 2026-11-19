@@ -29,6 +29,13 @@ disco virtio-blk en `00:03.0`. Durante el arranque las auto-pruebas leen el
 sector 1 del disco de arranque (EFI PART), escriben/leen los sectores 0 y 1 del
 disco QA y comprueban que una capacidad sin `WRITE` no puede escribir.
 
+T1.3 (Fase 1) añade el sistema de objetos en disco sobre ese mismo disco QA:
+superblocks duplicados con generación y SHA-256, B+ tree de fanout 8
+(hasta 64 objetos), extents de hasta 4096 bytes, copy-on-write y verificación
+de hashes. Las auto-pruebas formatean el disco, confirman que un commit no
+sobrescribe nodos vivos, simulan un corte de energía antes del commit y
+comprueban que la corrupción de un dato, un nodo o un superblock se detecta.
+
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
 auto-pruebas scriptadas durante el arranque**. Esto se documenta en detalle en
@@ -96,8 +103,8 @@ build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
 Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`
-y COM1 contiene todos los marcadores `A4`–`A9` y `T1.2`; devuelve `1` si falta
-alguno o aparece un marcador `FAIL`. Opciones útiles:
+y COM1 contiene todos los marcadores `A4`–`A9`, `T1.2` y `T1.3`; devuelve `1`
+si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
@@ -118,12 +125,14 @@ Este comando hace todo lo anterior y además verifica explícitamente por COM1:
 2. que la terminal exige login y ejecuta **todos** los comandos de A9;
 3. que el servicio de bloques detecta dos discos, configura la cola, lee,
    escribe y verifica capacidades (T1.2);
-4. que no hay marcadores `A4`–`A9` ni `T1.2` con `FAIL`.
+4. que el sistema de objetos en disco pasa formato, COW, corte simulado y
+   detección de corrupción por checksum (T1.3);
+5. que no hay marcadores `A4`–`A9`, `T1.2` ni `T1.3` con `FAIL`.
 
 Salida esperada al final:
 
 ```
-[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (46/46 marcadores; 46 esperados)
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (51/51 marcadores; 51 esperados)
 ```
 
 Si falla, imprime los marcadores ausentes y la ruta a `build/serial.log`.

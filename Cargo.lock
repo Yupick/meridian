@@ -57,6 +57,7 @@ version = "0.1.0"
 dependencies = [
  "font8x8",
  "meridian-bootinfo",
+ "meridian-crypto",
 ]
 
 [[package]]
