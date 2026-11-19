@@ -10,7 +10,9 @@
 #   - los objetos en disco con COW, checksums y corte simulado (T1.3);
 #   - el volumen cifrado XTS-AES-256/Argon2id y su persistencia (T1.5);
 #   - la pila de red virtio-net con tráfico real host<->guest (T2.1);
-#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5/T2.1 ... FAIL".
+#   - los grupos y ACLs sobre el volumen cifrado, con acceso permitido y
+#     denegado (T2.2);
+#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5/T2.1/T2.2 ... FAIL".
 #
 # Devuelve 0 solo si la build, el arranque y todas las comprobaciones pasan.
 #
@@ -38,7 +40,7 @@ log()  { printf '[alpha] %s\n' "$*"; }
 fail() { printf '[alpha] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -82,7 +84,7 @@ log "arrancando QEMU/OVMF y ejecutando login + comandos A9 (ver $RUN_LOG)"
 
 [[ -s "$SERIAL_LOG" ]] || fail "no hay salida COM1 en $SERIAL_LOG"
 
-# Verificación explícita de login (A8), comandos terminal (A9), T1.x y T2.1.
+# Verificación explícita de login (A8), comandos terminal (A9), T1.x, T2.1 y T2.2.
 REQUIRED_MARKERS=(
     "Meridian booting"
     "A4: buddy alloc/free tests PASS"
@@ -148,6 +150,12 @@ REQUIRED_MARKERS=(
     "T2.1: TCP handshake PASS"
     "T2.1: IPv6 ICMPv6 echo PASS"
     "T2.1: network stack tests PASS"
+    "T2.2: group assignment PASS"
+    "T2.2: ACL read allowed PASS"
+    "T2.2: ACL write denied PASS"
+    "T2.2: group isolation PASS"
+    "T2.2: encrypted ACL persistence PASS"
+    "T2.2: permissions tests PASS"
 )
 
 log "verificando ${#REQUIRED_MARKERS[@]} marcadores en COM1"
@@ -160,9 +168,9 @@ for marker in "${REQUIRED_MARKERS[@]}"; do
         missing=$((missing + 1))
     fi
 done
-(( missing == 0 )) || fail "faltan $missing marcadores de Alpha/T2.1 en $SERIAL_LOG"
+(( missing == 0 )) || fail "faltan $missing marcadores de Alpha/T2.2 en $SERIAL_LOG"
 
-if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL|T2\.1: .*FAIL' "$SERIAL_LOG"; then
+if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL|T2\.1: .*FAIL|T2\.2: .*FAIL' "$SERIAL_LOG"; then
     fail "el kernel reportó un marcador FAIL (ver $SERIAL_LOG)"
 fi
 

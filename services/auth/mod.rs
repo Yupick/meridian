@@ -14,6 +14,14 @@ use crate::fs::{self, FsError, FS_OBJECT_ID, ROOT_NODE, NodeId};
 
 pub mod selftest;
 
+/// Bits de grupo para las ACLs del volumen cifrado (T2.2).
+pub const GROUP_ADMIN: u8 = 1 << 0;
+pub const GROUP_USERS: u8 = 1 << 1;
+pub const GROUP_AUDIT: u8 = 1 << 2;
+pub const GROUP_GUEST: u8 = 1 << 3;
+/// Todos los grupos definidos (lectura pública).
+pub const GROUP_ALL: u8 = GROUP_ADMIN | GROUP_USERS | GROUP_AUDIT | GROUP_GUEST;
+
 /// Máximo de usuarios registrados.
 pub const MAX_USERS: usize = 8;
 pub const MAX_NAME: usize = 16;
@@ -84,6 +92,22 @@ fn temp_hash(password: &[u8], salt: u64) -> [u8; HASH_LEN] {
     out
 }
 
+/// Grupos inferidos por nombre en alpha (T2.2). El nombre `root` recibe
+/// `ADMIN|USERS`, `bob` pertenece además a `AUDIT` y `guest` solo a `GUEST`.
+fn groups_for_name(name: &[u8]) -> u8 {
+    if name == b"root" {
+        GROUP_ADMIN | GROUP_USERS
+    } else if name == b"alice" {
+        GROUP_USERS
+    } else if name == b"bob" {
+        GROUP_USERS | GROUP_AUDIT
+    } else if name == b"guest" {
+        GROUP_GUEST
+    } else {
+        GROUP_USERS
+    }
+}
+
 fn eq_const(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() { return false; }
     let mut diff: u8 = 0;
@@ -100,6 +124,7 @@ struct User {
     in_use: bool,
     name: [u8; MAX_NAME],
     name_len: u8,
+    groups: u8,
     salt: u64,
     hash: [u8; HASH_LEN],
     home: [u8; 32],
@@ -112,6 +137,7 @@ impl User {
             in_use: false,
             name: [0; MAX_NAME],
             name_len: 0,
+            groups: 0,
             salt: 0,
             hash: [0; HASH_LEN],
             home: [0; 32],
@@ -164,6 +190,7 @@ impl UserStore {
         u.in_use = true;
         u.name_len = nb.len() as u8;
         let mut j = 0; while j < nb.len() { u.name[j] = nb[j]; j += 1; }
+        u.groups = groups_for_name(nb);
         u.salt = salt;
         u.hash = temp_hash(password.as_bytes(), salt);
         let hb = home.as_bytes();
@@ -188,6 +215,8 @@ fn store() -> &'static mut UserStore {
 pub struct Session {
     pub username: [u8; MAX_NAME],
     pub username_len: u8,
+    /// Grupos de T2.2 inferidos al registrar el usuario.
+    pub groups: u8,
     pub caps: CapTable,
     pub home: [u8; 32],
     pub home_len: u8,
@@ -278,6 +307,7 @@ pub fn login(
     let mut session = Session {
         username: [0; MAX_NAME],
         username_len: u.name_len,
+        groups: u.groups,
         caps,
         home: u.home,
         home_len: u.home_len,

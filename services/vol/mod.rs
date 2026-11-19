@@ -91,7 +91,7 @@ const SALT_DOMAIN: &[u8] = b"meridian-volume-dev-salt-v1";
 const KDF_ASSOCIATED_DATA: &[u8] = b"meridian-volume-key-v1";
 
 /// Passphrase de QA. NUNCA usar en producción; ver la nota del módulo.
-const DEV_PASSPHRASE: &[u8] = b"meridian-alpha-volume-key-v1";
+pub const DEV_PASSPHRASE: &[u8] = b"meridian-alpha-volume-key-v1";
 const VERIFIER_PLAINTEXT: &[u8] = b"meridian-volume-verifier-v1";
 
 /// Errores del volumen cifrado.
