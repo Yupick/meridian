@@ -240,7 +240,8 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 
 - **T2.1 — Pila de red** — completed, alta, Backend. Dependencias: A10. Ethernet, ARP, IPv4/IPv6, TCP y UDP con virtio-net. Criterio: ping y conexión TCP desde el host.
   - **completed-at:** 2026-11-19 (PR #23 mergeado en develop, commit eb581df; `tests/run-alpha.sh` pasa 64/64 marcadores con virtio-net, ARP, ICMPv4, UDP, TCP e ICMPv6 sobre tráfico real host↔guest; `build/net-peer.log` registra 6/6 eventos PASS; `tests/run-signature.sh` OK)
-- **T2.2 — Usuarios con permisos** — pending, alta, Backend. Dependencias: A8, T1.5. Grupos y permisos sobre el sistema de objetos. Criterio: pruebas de acceso permitido y denegado.
+- **T2.2 — Usuarios con permisos** — completed, alta, Backend. Dependencias: A8, T1.5. Grupos y permisos sobre el sistema de objetos. Criterio: pruebas de acceso permitido y denegado.
+  - **completed-at:** 2026-11-19 (PR #24 mergeado en develop, commit 5419f0a; `tests/run-alpha.sh` pasa 70/70 marcadores con grupos, ACLs estáticas sobre objetos cifrados, lectura permitida, escritura denegada, aislamiento entre grupos y persistencia tras `open`; `build/net-peer.log` 6/6; `tests/run-signature.sh` OK)
 - **T2.3 — Acceso remoto cifrado** — pending, alta, Backend + QA. Dependencias: T2.1, T2.2, T1.4. Protocolo sobre TLS 1.3 propio. Criterio: sesión remota cifrada verificada con captura de tráfico.
 
 ## Fase 3 — Beta de servidor (pending)
