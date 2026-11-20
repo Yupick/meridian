@@ -236,13 +236,16 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **T1.5 — Cifrado de volumen** — completed, alta, Backend. Dependencias: T1.3, T1.4. Criterio: el volumen es ilegible sin clave y persiste tras reinicio.
   - **completed-at:** 2026-11-19 (PR #21 mergeado en develop, commit cfc2a8a; `tests/run-alpha.sh` pasa 56/56 marcadores con XTS-AES-256, Argon2id, rechazo de clave errónea, ciphertext en crudo y persistencia tras `open`; `tests/run-signature.sh` OK)
 
-## Fase 2 — Red y servicios de servidor (in_progress)
+## Fase 2 — Red y servicios de servidor (completed)
+
+- **completed-at:** 2026-11-20 (PR #26 `develop -> main` mergeado; criterio de salida cumplido con login remoto cifrado TLS 1.3 PSK verificado sobre tráfico real host↔guest y 83/83 marcadores en `tests/run-alpha.sh`).
 
 - **T2.1 — Pila de red** — completed, alta, Backend. Dependencias: A10. Ethernet, ARP, IPv4/IPv6, TCP y UDP con virtio-net. Criterio: ping y conexión TCP desde el host.
   - **completed-at:** 2026-11-19 (PR #23 mergeado en develop, commit eb581df; `tests/run-alpha.sh` pasa 64/64 marcadores con virtio-net, ARP, ICMPv4, UDP, TCP e ICMPv6 sobre tráfico real host↔guest; `build/net-peer.log` registra 6/6 eventos PASS; `tests/run-signature.sh` OK)
 - **T2.2 — Usuarios con permisos** — completed, alta, Backend. Dependencias: A8, T1.5. Grupos y permisos sobre el sistema de objetos. Criterio: pruebas de acceso permitido y denegado.
   - **completed-at:** 2026-11-19 (PR #24 mergeado en develop, commit 5419f0a; `tests/run-alpha.sh` pasa 70/70 marcadores con grupos, ACLs estáticas sobre objetos cifrados, lectura permitida, escritura denegada, aislamiento entre grupos y persistencia tras `open`; `build/net-peer.log` 6/6; `tests/run-signature.sh` OK)
-- **T2.3 — Acceso remoto cifrado** — pending, alta, Backend + QA. Dependencias: T2.1, T2.2, T1.4. Protocolo sobre TLS 1.3 propio. Criterio: sesión remota cifrada verificada con captura de tráfico.
+- **T2.3 — Acceso remoto cifrado** — completed, alta, Backend + QA. Dependencias: T2.1, T2.2, T1.4. Protocolo sobre TLS 1.3 propio. Criterio: sesión remota cifrada verificada con captura de tráfico.
+  - **completed-at:** 2026-11-20 (PR #25 mergeado en develop, commit `b25aed8`; AES-128-GCM con vector NIST propio, perfil TLS 1.3 PSK dev-only sobre UDP/9443, lecturas cifradas autorizada/denegada integradas con T2.2, replay rechazado; `tests/run-alpha.sh` pasa 83/83 marcadores con 6/6 NETPEER y 7/7 TLSCAP; `tests/run-signature.sh` OK; `cargo test -p meridian-crypto` OK)
 
 ## Fase 3 — Beta de servidor (pending)
 
