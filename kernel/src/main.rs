@@ -41,6 +41,9 @@ mod vol;
 // Pila de red sobre virtio-net (T2.1).
 #[path = "../../services/net/mod.rs"]
 mod net;
+// Acceso remoto cifrado TLS 1.3 PSK (T2.3).
+#[path = "../../services/tls/mod.rs"]
+mod tls;
 // Servicio de archivos en memoria (A7).
 #[path = "../../services/fs/mod.rs"]
 mod fs;
@@ -240,6 +243,12 @@ extern "sysv64" fn kernel_main() -> ! {
         t22_fatal(&mut console);
     }
 
+    // --- T2.3: acceso remoto cifrado (TLS 1.3 PSK sobre UDP) ---------------
+    console.println("");
+    if !tls::selftest::run(&mut console) {
+        t23_fatal(&mut console);
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
 
@@ -308,6 +317,12 @@ fn t21_fatal(console: &mut Console) -> ! {
 fn t22_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "T2.2: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn t23_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "T2.3: SELFTEST FAILED - halting CPU");
     halt()
 }
 

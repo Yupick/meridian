@@ -1,9 +1,10 @@
 # Meridian Alpha — guía de construcción, arranque y terminal
 
-Esta guía cubre la **Alpha (Fase 0, A1–A10)**, la pila de red **T2.1** y los
-**usuarios con permisos (T2.2)**: cómo comprobar el entorno, construir la imagen
-UEFI, arrancarla en QEMU/OVMF y ejecutar/verificar la terminal scriptada, el
-tráfico de red real host↔guest y las ACLs sobre el volumen cifrado.
+Esta guía cubre la **Alpha (Fase 0, A1–A10)**, la pila de red **T2.1**, los
+**usuarios con permisos (T2.2)** y el **acceso remoto cifrado (T2.3)**: cómo
+comprobar el entorno, construir la imagen UEFI, arrancarla en QEMU/OVMF y
+verificar la terminal scriptada, el tráfico de red real host↔guest, las ACLs
+sobre el volumen cifrado y el perfil TLS 1.3 PSK con captura de tráfico.
 
 ## 1. Alcance de la Alpha
 
@@ -107,6 +108,63 @@ T2.2: encrypted ACL persistence PASS
 T2.2: permissions tests PASS
 ```
 
+T2.3 (Fase 2) añade **acceso remoto cifrado** sobre el mismo backend UDP dgram
+de T2.1 (sin NIC adicional), usando el puerto UDP `9443` (`TLS_PORT`). El guest
+implementa un perfil **TLS 1.3 PSK propio, dev-only (solo QA)**:
+
+- **PSK dev:** `SHA256(b"meridian-tls13-dev-psk-v1")` (32 bytes). No apto para
+  producción; documentado solo para pruebas.
+- **Cripto propia:** AES-128-GCM en `crypto/src/gcm.rs` (GHASH + CTR32 sobre
+  `meridian_crypto::aes`) y HKDF-SHA256/HMAC-SHA256 en `services/tls/mod.rs`
+  sobre `meridian_crypto::sha256`. Sin dependencias criptográficas externas en
+  el kernel/guest.
+- **Handshake (registros TLS planos 0x16, legacy 0x0303):**
+  - `ClientHello` payload: `magic b"MRSTLS13"` (8) | `type=1` | `client_random[32]`
+    (host: `sha256(b"meridian-tls-client-random-v1")`) | `psk_id=0`.
+  - `ServerHello` payload: `b"MRSTLS13"` | `type=2` | `server_random[32]` (guest:
+    `sha256(b"meridian-tls-server-random-v1" || client_random)`) | `psk_id=0` |
+    `verify[16]`.
+  - `transcript_hash = SHA256(ClientHello.payload || ServerHello.payload[..41])`
+    (sin `verify`).
+  - `early = HKDF-Extract(zeros32, psk)`;
+    `hs = HKDF-Expand(early, b"meridian tls13 handshake" || transcript_hash, 32)`;
+    `client_key`/`client_iv`/`server_key`/`server_iv`/`finished_key` con labels
+    `b"meridian tls13 c key"`, `b"meridian tls13 c iv"`,
+    `b"meridian tls13 s key"`, `b"meridian tls13 s iv"`,
+    `b"meridian tls13 finished"` (HKDF-Expand `HMAC(hs, label||info||0x01)`, `info`
+    vacío salvo handshake).
+  - `verify = HMAC-SHA256(finished_key, transcript_hash)[..16]`.
+- **Registros cifrados:** AES-128-GCM, AAD = 5 bytes de cabecera TLS (0x0303),
+  nonce = `IV XOR seq` (seq big-endian en últimos 8 bytes), seq separado
+  cliente/servidor desde 1, ciphertext = `plaintext||tag16`.
+  - `Finished` (content_type=20): plaintext `HMAC(finished_key, b"client finished" || transcript_hash)[..16]`.
+  - Aplicación (23): request `b"REQ\0" | user_len u8 | user | key u64 BE | rights u8 (1=READ,2=WRITE) | seq u64 BE`; respuesta `b"RES\0" | status u8 (1=allowed,0=denied) | user_len u8 | user | key u64 BE | value_len u16 BE | value`.
+- **Replay:** Finished o request con `seq` ya usada ⇒ respuesta cifrada de alerta
+  (content_type=21, plaintext `b"replay"`), sin revelar claves/objetos.
+- **Integración T2.2:** el guest resuelve el usuario del request a una sesión
+  `auth::Session` precargada (root/alice/guest) y aplica `perm::check` +
+  `PermissionedVolume` sobre device 1 (`vol::DEV_PASSPHRASE`) antes de devolver
+  el valor. Nunca se envían passwords ni plaintexts de objetos en claro por la
+  red.
+
+`tools/net-peer.py` (usa `cryptography` en el host, requerido para QA TLS)
+mantiene T2.1 intacto y, tras completarlo, ejecuta el cliente TLS en 9443 y
+escribe `build/tls-capture.log` con 7 eventos: ClientHello/ServerHello/Finished
+observados/verificados, `application ciphertext captured` (incluye hash corto y
+confirma que `remote-notice-v1` no aparece en claro), y lecturas cifradas
+autorizada/denegada + replay rechazado. Timeout del peer: 60s.
+
+Marcadores T2.3 en `build/serial.log`:
+
+```
+T2.3: TLS 1.3 handshake PASS
+T2.3: Finished verified PASS
+T2.3: encrypted read allowed PASS
+T2.3: encrypted read denied PASS
+T2.3: replay rejected PASS
+T2.3: remote session tests PASS
+```
+
 No hay entrada interactiva real de teclado ni REPL de usuario en tiempo de
 ejecución: la pantalla de login y la terminal se **ejercitan mediante
 auto-pruebas scriptadas durante el arranque**. Esto se documenta en detalle en
@@ -174,9 +232,11 @@ build/screen.png     # conversión PNG si Pillow está disponible
 ```
 
 Devuelve `0` cuando el debugcon contiene `meridian: firma de kernel verificada`,
-COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5`, `T2.1` y
-`T2.2`, y `build/net-peer.log` contiene los seis eventos `NETPEER: ... PASS`;
-devuelve `1` si falta alguno o aparece un marcador `FAIL`. Opciones útiles:
+COM1 contiene todos los marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5`, `T2.1`, `T2.2`
+y `T2.3`, `build/net-peer.log` contiene los 6 eventos `NETPEER: ... PASS` y
+`build/tls-capture.log` contiene los 7 eventos `TLSCAP: ... PASS` (83/83 en QA);
+devuelve `1` si falta alguno o aparece un marcador `FAIL`/`TLSCAP: ... FAIL`.
+Opciones útiles:
 
 ```bash
 tools/run.sh --timeout 60
@@ -191,7 +251,7 @@ MERIDIAN_QEMU_DISPLAY=gtk tools/run.sh
 tests/run-alpha.sh
 ```
 
-Este comando hace todo lo anterior y además verifica explícitamente por COM1:
+Este comando hace todo lo anterior y además verifica explícitamente:
 
 1. que el login se muestra y autentica (A8);
 2. que la terminal exige login y ejecuta **todos** los comandos de A9;
@@ -201,19 +261,23 @@ Este comando hace todo lo anterior y además verifica explícitamente por COM1:
    detección de corrupción por checksum (T1.3);
 5. que el volumen cifrado pasa formato, rechazo de clave errónea, ciphertext en
    crudo y persistencia tras `open` (T1.5);
- 6. que la pila de red detecta virtio-net y completa ARP, ping IPv4, UDP echo,
-    handshake TCP y ping IPv6 con tráfico real verificado por `tools/net-peer.py`
-    (T2.1);
- 7. que los grupos se asignan correctamente, que una lectura permitida y una
-    escritura denegada se comportan según la ACL, que los grupos están aislados
-    y que las ACLs persisten en el volumen cifrado tras `open` (T2.2);
- 8. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5`, `T2.1` ni `T2.2`
-    con `FAIL`.
+6. que la pila de red detecta virtio-net y completa ARP, ping IPv4, UDP echo,
+   handshake TCP y ping IPv6 con tráfico real verificado por `tools/net-peer.py`
+   (T2.1);
+7. que los grupos se asignan correctamente, que una lectura permitida y una
+   escritura denegada se comportan según la ACL, que los grupos están aislados
+   y que las ACLs persisten en el volumen cifrado tras `open` (T2.2);
+8. que el acceso remoto cifrado T2.3 completa handshake TLS 1.3 PSK, Finished,
+   lectura cifrada autorizada/denegada y rechazo de replay, y que
+   `build/tls-capture.log` registra los 7 eventos `TLSCAP` (tráfico cifrado, sin
+   `remote-notice-v1` en claro);
+9. que no hay marcadores `A4`–`A9`, `T1.2`, `T1.3`, `T1.5`, `T2.1`, `T2.2` ni
+   `T2.3` con `FAIL`, ni `TLSCAP: ... FAIL`.
 
 Salida esperada al final:
 
 ```
-[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (70/70 marcadores; 70 esperados)
+[alpha] OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (83/83 marcadores; 83 esperados)
 ```
 
 Si falla, imprime los marcadores ausentes y la ruta a `build/serial.log`.
@@ -226,7 +290,9 @@ tests/run-alpha.sh --no-screenshot
 ```
 
 Los logs completos quedan en `build/alpha-build.log` y `build/alpha-run.log`.
-El tráfico de red T2.1 queda registrado en `build/net-peer.log`.
+El tráfico de red T2.1 queda registrado en `build/net-peer.log` y la captura
+TLS T2.3 en `build/tls-capture.log` (requiere `python3-cryptography` en el
+host, ya instalado para QA).
 
 QA adicional de la firma del kernel (T1.1, fuera del alcance de la Alpha):
 
