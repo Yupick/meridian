@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/run-alpha.sh — QA de integración de la Alpha (A10, Fase 0).
+# tests/run-alpha.sh — QA de integración de la Alpha (A10, Fase 0) + T1.x/T2.1.
 #
 # Un único comando construye Meridian, arranca la imagen en QEMU/OVMF y
 # verifica por COM1 que:
@@ -9,7 +9,13 @@
 #     help, clear y exit;
 #   - los objetos en disco con COW, checksums y corte simulado (T1.3);
 #   - el volumen cifrado XTS-AES-256/Argon2id y su persistencia (T1.5);
-#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5 ... FAIL".
+#   - la pila de red virtio-net con tráfico real host<->guest (T2.1);
+#   - los grupos y ACLs sobre el volumen cifrado, con acceso permitido y
+#     denegado (T2.2);
+#   - el acceso remoto cifrado TLS 1.3 PSK sobre UDP/9443, con handshake,
+#     Finished, lecturas cifradas autorizada/denegada, replay y captura de
+#     tráfico en `build/tls-capture.log` (T2.3);
+#   - no aparece ningún marcador "A4/A5/A6/A7/A8/A9/T1.2/T1.3/T1.5/T2.1/T2.2/T2.3 ... FAIL" ni "TLSCAP: ... FAIL".
 #
 # Devuelve 0 solo si la build, el arranque y todas las comprobaciones pasan.
 #
@@ -37,7 +43,7 @@ log()  { printf '[alpha] %s\n' "$*"; }
 fail() { printf '[alpha] ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -81,8 +87,8 @@ log "arrancando QEMU/OVMF y ejecutando login + comandos A9 (ver $RUN_LOG)"
 
 [[ -s "$SERIAL_LOG" ]] || fail "no hay salida COM1 en $SERIAL_LOG"
 
-# Verificación explícita de login (A8) y de cada comando de la terminal (A9).
-REQUIRED_MARKERS=(
+# Verificación explícita de login (A8), comandos terminal (A9), T1.x, T2.1, T2.2 y T2.3.
+SERIAL_MARKERS=(
     "Meridian booting"
     "A4: buddy alloc/free tests PASS"
     "A4: W^X check PASS"
@@ -139,11 +145,44 @@ REQUIRED_MARKERS=(
     "T1.5: raw sectors are ciphertext PASS"
     "T1.5: persists after reopen PASS"
     "T1.5: volume encryption tests PASS"
+    "T2.1: virtio-net detect PASS"
+    "T2.1: ethernet framing PASS"
+    "T2.1: ARP reply PASS"
+    "T2.1: IPv4 ICMP ping reply PASS"
+    "T2.1: UDP echo reply PASS"
+    "T2.1: TCP handshake PASS"
+    "T2.1: IPv6 ICMPv6 echo PASS"
+    "T2.1: network stack tests PASS"
+    "T2.2: group assignment PASS"
+    "T2.2: ACL read allowed PASS"
+    "T2.2: ACL write denied PASS"
+    "T2.2: group isolation PASS"
+    "T2.2: encrypted ACL persistence PASS"
+    "T2.2: permissions tests PASS"
+    "T2.3: TLS 1.3 handshake PASS"
+    "T2.3: Finished verified PASS"
+    "T2.3: encrypted read allowed PASS"
+    "T2.3: encrypted read denied PASS"
+    "T2.3: replay rejected PASS"
+    "T2.3: remote session tests PASS"
 )
 
-log "verificando ${#REQUIRED_MARKERS[@]} marcadores en COM1"
+TLSCAP_MARKERS=(
+    "TLSCAP: ClientHello observed"
+    "TLSCAP: ServerHello verified"
+    "TLSCAP: Finished verified"
+    "TLSCAP: application ciphertext captured"
+    "TLSCAP: encrypted read allowed PASS"
+    "TLSCAP: encrypted read denied PASS"
+    "TLSCAP: replay rejected PASS"
+)
+
+TLSCAP_LOG="$BUILD_DIR/tls-capture.log"
+TOTAL_MARKERS=$(( ${#SERIAL_MARKERS[@]} + ${#TLSCAP_MARKERS[@]} ))
+
+log "verificando ${#SERIAL_MARKERS[@]} marcadores en COM1 y ${#TLSCAP_MARKERS[@]} en tls-capture.log (total ${TOTAL_MARKERS})"
 missing=0
-for marker in "${REQUIRED_MARKERS[@]}"; do
+for marker in "${SERIAL_MARKERS[@]}"; do
     if grep -Fq -- "$marker" "$SERIAL_LOG"; then
         printf '  [OK] %s\n' "$marker"
     else
@@ -151,15 +190,32 @@ for marker in "${REQUIRED_MARKERS[@]}"; do
         missing=$((missing + 1))
     fi
 done
-(( missing == 0 )) || fail "faltan $missing marcadores de Alpha en $SERIAL_LOG"
+for marker in "${TLSCAP_MARKERS[@]}"; do
+    if [[ -f "$TLSCAP_LOG" ]] && grep -Fq -- "$marker" "$TLSCAP_LOG"; then
+        printf '  [OK] %s\n' "$marker"
+    else
+        printf '  [FALTA] %s\n' "$marker" >&2
+        missing=$((missing + 1))
+    fi
+done
+(( missing == 0 )) || fail "faltan $missing marcadores de Alpha/T2.3 en $SERIAL_LOG o $TLSCAP_LOG"
 
-if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL' "$SERIAL_LOG"; then
+if grep -Eq 'A4: .*FAIL|A5: .*FAIL|A6: .*FAIL|A7: .*FAIL|A8: .*FAIL|A9: .*FAIL|T1\.2: .*FAIL|T1\.3: .*FAIL|T1\.5: .*FAIL|T2\.1: .*FAIL|T2\.2: .*FAIL|T2\.3: .*FAIL' "$SERIAL_LOG"; then
     fail "el kernel reportó un marcador FAIL (ver $SERIAL_LOG)"
 fi
+if [[ -f "$TLSCAP_LOG" ]] && grep -Eq 'TLSCAP: .*FAIL' "$TLSCAP_LOG"; then
+    fail "el peer TLS reportó un marcador FAIL (ver $TLSCAP_LOG)"
+fi
 
-log "OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (${#REQUIRED_MARKERS[@]}/${#REQUIRED_MARKERS[@]} marcadores; ${#REQUIRED_MARKERS[@]} esperados)"
+log "OK: Alpha QA PASS — login + comandos A9 ejecutados en QEMU (${TOTAL_MARKERS}/${TOTAL_MARKERS} marcadores; ${TOTAL_MARKERS} esperados)"
 log "Serial: $SERIAL_LOG"
 log "Logs:   $BUILD_LOG, $RUN_LOG"
+if [[ -f "$BUILD_DIR/net-peer.log" ]]; then
+    log "Net peer: $BUILD_DIR/net-peer.log"
+fi
+if [[ -f "$TLSCAP_LOG" ]]; then
+    log "TLS capture: $TLSCAP_LOG"
+fi
 if [[ -f "$BUILD_DIR/screen.png" ]]; then
     log "GOP:    $BUILD_DIR/screen.png"
 fi
