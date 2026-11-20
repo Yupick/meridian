@@ -247,7 +247,9 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **T2.3 — Acceso remoto cifrado** — completed, alta, Backend + QA. Dependencias: T2.1, T2.2, T1.4. Protocolo sobre TLS 1.3 propio. Criterio: sesión remota cifrada verificada con captura de tráfico.
   - **completed-at:** 2026-11-20 (PR #25 mergeado en develop, commit `b25aed8`; AES-128-GCM con vector NIST propio, perfil TLS 1.3 PSK dev-only sobre UDP/9443, lecturas cifradas autorizada/denegada integradas con T2.2, replay rechazado; `tests/run-alpha.sh` pasa 83/83 marcadores con 6/6 NETPEER y 7/7 TLSCAP; `tests/run-signature.sh` OK; `cargo test -p meridian-crypto` OK)
 
-## Fase 3 — Beta de servidor (in_progress)
+## Fase 3 — Beta de servidor (completed)
+
+- **completed-at:** 2026-11-20 (PR #30 `develop -> main`; tag `v0.4.0-beta`; criterio de salida cumplido con imagen instalable creada desde cero y arrancada en QEMU/OVMF por `tests/run-install.sh`; QA final de cierre: `tests/run-alpha.sh` 83/83 marcadores con 6/6 NETPEER y 7/7 TLSCAP, `tests/run-install.sh` OK, `tests/run-signature.sh` OK, `tests/run-load.sh --runs 3 --no-screenshot` 3/3, `cargo test -p meridian-crypto` OK; documentación de usuario e instalación en `docs/beta.md` y README actualizado)
 
 - **T3.1 — Estabilización y pruebas de carga** — completed, alta, QA. Dependencias: T2.3.
   - **completed-at:** 2026-11-20 (PR #27 mergeado en develop, commit `ca5c198`; `tests/run-load.sh` ejecuta burn-in de `tests/run-alpha.sh` con verificación de 83/83 marcadores, 6/6 NETPEER y 7/7 TLSCAP por iteración; validado 3/3 iteraciones, `cargo test -p meridian-crypto` y `tests/run-signature.sh` OK; documentado en `docs/alpha.md`)
