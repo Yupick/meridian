@@ -258,10 +258,11 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **T3.3 — Imagen instalable** — completed, alta, Backend. Dependencias: T3.1. Criterio: imagen instalada desde cero en QEMU.
   - **completed-at:** 2026-11-20 (PR #28 mergeado en develop, commit `6394949`; `tools/install-image.sh` crea GPT/ESP desde cero sin escribir en `/dev`, `tools/run.sh` acepta `--image`/`--blocktest`, `tests/run-install.sh` verifica GPT/ESP y arranca la imagen instalada en QEMU/OVMF con 83/83 marcadores, 6/6 NETPEER y 7/7 TLSCAP; `tests/run-signature.sh` OK)
 
-## Fase 4 — Escritorio y gráficos (pending)
+## Fase 4 — Escritorio y gráficos (in_progress)
 
-- **T4.1 — Compositor y ventanas** — pending, alta, Frontend. Dependencias: T3.3.
+- **T4.1 — Compositor y ventanas** — pending, alta, Frontend. Dependencias: T3.3. Criterio: escritorio con al menos dos ventanas y foco visible en QEMU/OVMF.
 - **T4.2 — Driver de GPU en espacio de usuario** — pending, media, Backend. Dependencias: T4.1. Criterio: un fallo del driver no tumba el kernel.
+- **T4.3 — Terminal interactiva** — pending, alta, Backend + Frontend. Dependencias: T4.1. Criterio: prompt de comandos utilizable por consola serie y reflejado en la ventana de terminal del escritorio; no romper el QA 83/83 de la beta de servidor.
 
 ## Fase 5 — ARM64 (pending)
 
