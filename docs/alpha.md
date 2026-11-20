@@ -442,3 +442,51 @@ T3.1 load QA PASS (3/3 iteraciones, 83/83 marcadores por iteración)
 La limpieza previa de `build/load/` asegura que no queden restos de iteraciones
 anteriores. Cada iteración delega en `tests/run-alpha.sh`, que limpia sus propios
 procesos QEMU y `net-peer.py`; el script T3.1 no realiza `pkill` global.
+
+## 10. Imagen instalable T3.3
+
+T3.3 separa la construcción de artefactos de la instalación. `tools/build.sh`
+sigue generando los artefactos y la imagen de desarrollo; `tools/install-image.sh`
+crea **desde cero** una imagen GPT arrancable con el mismo layout (sector 2048,
+ESP FAT32 de 64 MiB, typecode `ef00`, nombre `MERIDIAN`, con
+`EFI/BOOT/BOOTX64.EFI`, `kernel.elf` y `kernel.sig`). No crea `blocktest.img`:
+ese disco QA lo genera `tools/build.sh` y lo usa `tools/run.sh`.
+
+```bash
+tools/build.sh
+tools/install-image.sh --disk build/meridian-installed.img
+tests/run-install.sh
+```
+
+`tools/install-image.sh` acepta `--disk RUTA` (obligatorio), `--size-mb N`
+(default `96`) y `--artifacts DIR` (default `build`). Falla si falta alguno de
+los tres artefactos, rechaza `--disk` vacío, rutas bajo `/dev/` (incluso
+canonicalizadas) y targets existentes que no sean archivos regulares: nunca
+escribe en dispositivos de bloque reales. Verifica el contenido FAT con `mdir`
+antes de terminar e imprime un resumen `[install] ...`.
+
+Para arrancar directamente la imagen instalada:
+
+```bash
+tools/run.sh --image build/meridian-installed.img --no-screenshot
+tools/run.sh --image build/meridian-installed.img --blocktest build/blocktest.img
+```
+
+`--image` sustituye la imagen por defecto (`build/meridian.img`) y `--blocktest`
+el disco QA por defecto (`build/blocktest.img`); sin ellos el comportamiento no
+cambia. Siguen disponibles `--help`, `--timeout`, `--no-screenshot` y
+`--expect-signature-reject`.
+
+`tests/run-install.sh` construye artefactos frescos, instala en
+`build/install/meridian-installed.img`, verifica la GPT con `sgdisk` y los tres
+archivos con `mdir`, arranca la imagen con `tools/run.sh --image ...
+--no-screenshot` y comprueba código `0`, `83/83` marcadores (76 en COM1 y 7
+TLSCAP), `6/6 NETPEER` y `7/7 TLSCAP`. Los logs quedan en `build/install/`
+(`build.log`, `install.log`, `sgdisk.log`, `mdir.log`, `run.log`, además de los
+logs de QEMU, serie y peer).
+
+Salida esperada:
+
+```
+T3.3 install QA PASS: imagen instalada desde cero y arrancada en QEMU (83/83 marcadores)
+```
