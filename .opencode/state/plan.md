@@ -260,9 +260,10 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 
 ## Fase 4 — Escritorio y gráficos (in_progress)
 
-- **T4.1 — Compositor y ventanas** — pending, alta, Frontend. Dependencias: T3.3. Criterio: escritorio con al menos dos ventanas y foco visible en QEMU/OVMF.
+- **T4.1 — Compositor y ventanas** — completed, alta, Frontend. Dependencias: T3.3. Criterio: escritorio con al menos dos ventanas y foco visible en QEMU/OVMF.
+  - **completed-at:** 2026-11-20 (PR #32 mergeado en develop, commit `bf78989`; `services/gui/mod.rs` + `selftest.rs` dibujan dos ventanas ("System Monitor" y "Meridian Terminal") con borde/foco, geometría relativa al framebuffer, sin heap ni dependencias nuevas; `kernel/src/console.rs` expone `framebuffer_mut()`; `framebuffer.stride` público; `tests/run-desktop.sh` verifica 6 marcadores T4.1 y captura 1920x1200 en `build/desktop/screen.png`; `tests/run-alpha.sh` 83/83, 6/6 NETPEER, 7/7 TLSCAP y `tests/run-signature.sh` OK; documentado en `docs/desktop.md` y `README.md`)
 - **T4.2 — Driver de GPU en espacio de usuario** — pending, media, Backend. Dependencias: T4.1. Criterio: un fallo del driver no tumba el kernel.
-- **T4.3 — Terminal interactiva** — pending, alta, Backend + Frontend. Dependencias: T4.1. Criterio: prompt de comandos utilizable por consola serie y reflejado en la ventana de terminal del escritorio; no romper el QA 83/83 de la beta de servidor.
+- **T4.3 — Terminal interactiva** — in_progress, alta, Backend + Frontend. Dependencias: T4.1. Criterio: prompt de comandos utilizable por consola serie y reflejado en la ventana de terminal del escritorio; no romper el QA 83/83 de la beta de servidor.
 
 ## Fase 5 — ARM64 (pending)
 
