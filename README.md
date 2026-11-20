@@ -7,20 +7,36 @@ desarrollado desde cero en Rust.
 
 ## Estado
 
-Fase 0 (Alpha) completada: arranque UEFI, consola, memoria, procesos, IPC,
-sistema de archivos RAM, login y terminal scriptada verificados en QEMU con
-`tests/run-alpha.sh`. Ver `docs/alpha.md`.
+Fase 0 (Alpha) completada — tag `v0.1.0-alpha`: arranque UEFI, consola,
+memoria, procesos, IPC, sistema de archivos RAM, login y terminal scriptada
+verificados en QEMU con `tests/run-alpha.sh`. Ver `docs/alpha.md`.
 
-T1.1 (Fase 1): el bootloader verifica la firma Ed25519 de `\kernel.elf` antes
-de cargarlo y aborta con `SECURITY_VIOLATION` si es inválida o ausente; QA con
-`tests/run-signature.sh`. Ver `docs/boot.md`.
+Fase 1 completada — tag `v0.2.0-base`: el bootloader verifica la firma
+Ed25519 de `\kernel.elf` antes de cargarlo y aborta con `SECURITY_VIOLATION`
+si es inválida o ausente (T1.1, QA con `tests/run-signature.sh`); además
+criptografía base, servicio de bloques virtio-blk, objetos en disco con COW y
+volumen cifrado. Ver `docs/boot.md`.
 
-## Arranque rápido (Alpha)
+Fase 2 completada — tag `v0.3.0-network`: pila de red virtio-net (T2.1),
+grupos y ACLs sobre el volumen cifrado (T2.2) y acceso remoto cifrado TLS 1.3
+PSK dev-only (T2.3).
+
+Fase 3 (beta de servidor) completada — tag `v0.4.0-beta`: estabilización con
+burn-in (T3.1), guía de usuario e instalación (T3.2) e imagen instalable
+verificada desde cero en QEMU/OVMF (T3.3). La beta **no es apta para datos
+sensibles** hasta la auditoría de la Fase 8. Ver `docs/beta.md`.
+
+## Arranque rápido (beta de servidor)
 
 ```bash
 tools/check-env.sh
+tools/build.sh
 tests/run-alpha.sh
 ```
+
+`tests/run-alpha.sh` construye la imagen UEFI firmada, la arranca en
+QEMU/OVMF y verifica 83/83 marcadores (76 en COM1 + 7 TLSCAP) con 6/6
+`NETPEER`. Guía de instalación y uso: [`docs/beta.md`](docs/beta.md).
 
 ## Principios
 
@@ -49,15 +65,30 @@ tests/        Pruebas unitarias e integración
 docs/         Especificaciones internas
 ```
 
+## Documentación
+
+- [`docs/beta.md`](docs/beta.md) — guía de usuario e instalación de la beta de
+  servidor (Fase 3): requisitos, construcción, arranque, imagen instalable y QA.
+- [`docs/alpha.md`](docs/alpha.md) — guía de construcción, arranque y terminal
+  de la Alpha, con la pila de red, permisos, acceso remoto y QA detallada.
+- [`docs/boot.md`](docs/boot.md) — arranque UEFI, handoff `BootInfo` y
+  verificación de firma del kernel (T1.1).
+
 ## Requisitos de desarrollo (Ubuntu 24.04)
 
 ```bash
 sudo apt update
-sudo apt install -y qemu-system-x86 ovmf build-essential git mtools xorriso nasm
+sudo apt install -y qemu-system-x86 ovmf build-essential git gdisk dosfstools \
+  mtools xorriso nasm socat python3 python3-cryptography
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup target add x86_64-unknown-uefi
+rustup target add x86_64-unknown-uefi x86_64-unknown-none
 rustup component add rust-src llvm-tools
 ```
+
+Esto instala QEMU y OVMF, las herramientas de imagen (`sgdisk`, `mtools`,
+`xorriso`, `mkfs.fat`), `socat` y `python3-cryptography` (necesario para la QA
+de red/TLS), además de Rust con los targets `x86_64-unknown-uefi` y
+`x86_64-unknown-none`. Verifica el entorno con `tools/check-env.sh`.
 
 ## Licencia
 

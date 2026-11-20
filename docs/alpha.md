@@ -394,3 +394,99 @@ La Alpha se considera cerrada cuando:
   `completed`;
 - se abre el PR `develop -> main` y se etiqueta la versión de cierre de la Alpha
   siguiendo las reglas de GitFlow del plan.
+
+## 9. Estabilización T3.1
+
+Este apartado documenta la QA de carga T3.1 para validar la reproducibilidad
+del arranque UEFI/QEMU, la red UDP dgram y el TLS PSK tras la Fase 2.
+
+### Script `tests/run-load.sh`
+
+Ejecuta múltiples iteraciones de `tests/run-alpha.sh` para detectar flakiness.
+
+**Opciones:**
+
+- `--runs N` — número de iteraciones a ejecutar (default: 5). La variable de
+  entorno `MERIDIAN_LOAD_RUNS` define el valor por defecto; `--runs` la
+  sobrescribe.
+- `--no-screenshot` — si se pasa, cada iteración invoca
+  `tests/run-alpha.sh --no-screenshot` para omitir la captura GOP y acelerar
+  el proceso.
+
+**Funcionamiento:**
+
+1. Antes del primer burn-in, ejecuta `cargo test -p meridian-crypto` una sola vez
+   y guarda la salida en `build/load/crypto.log`.
+2. Limpia `build/load/` para empezar con un estado conocido.
+3. Por cada iteración *i* (1 a N):
+   - ejecuta `tests/run-alpha.sh` (opcionalmente con `--no-screenshot`),
+     capturando la salida en `build/load/alpha-<i>.log`;
+   - comprueba la línea `83/83 marcadores` en el log;
+   - verifica 6/6 eventos `NETPEER` en `build/net-peer.log`;
+   - verifica 7/7 eventos `TLSCAP` en `build/tls-capture.log`;
+   - falla inmediatamente si aparece un marcador `FAIL` del kernel.
+4. Al terminar, imprime el resumen:
+   `T3.1 load QA PASS (N/N iteraciones, 83/83 marcadores por iteración)`.
+
+### Salida esperada
+
+```
+T3.1 load QA PASS (3/3 iteraciones, 83/83 marcadores por iteración)
+```
+
+### Logs generados
+
+- `build/load/crypto.log` — salida de `cargo test -p meridian-crypto`.
+- `build/load/alpha-<i>.log` — salida de cada iteración de `run-alpha.sh`.
+
+La limpieza previa de `build/load/` asegura que no queden restos de iteraciones
+anteriores. Cada iteración delega en `tests/run-alpha.sh`, que limpia sus propios
+procesos QEMU y `net-peer.py`; el script T3.1 no realiza `pkill` global.
+
+## 10. Imagen instalable T3.3
+
+T3.3 separa la construcción de artefactos de la instalación. `tools/build.sh`
+sigue generando los artefactos y la imagen de desarrollo; `tools/install-image.sh`
+crea **desde cero** una imagen GPT arrancable con el mismo layout (sector 2048,
+ESP FAT32 de 64 MiB, typecode `ef00`, nombre `MERIDIAN`, con
+`EFI/BOOT/BOOTX64.EFI`, `kernel.elf` y `kernel.sig`). No crea `blocktest.img`:
+ese disco QA lo genera `tools/build.sh` y lo usa `tools/run.sh`.
+
+```bash
+tools/build.sh
+tools/install-image.sh --disk build/meridian-installed.img
+tests/run-install.sh
+```
+
+`tools/install-image.sh` acepta `--disk RUTA` (obligatorio), `--size-mb N`
+(default `96`) y `--artifacts DIR` (default `build`). Falla si falta alguno de
+los tres artefactos, rechaza `--disk` vacío, rutas bajo `/dev/` (incluso
+canonicalizadas) y targets existentes que no sean archivos regulares: nunca
+escribe en dispositivos de bloque reales. Verifica el contenido FAT con `mdir`
+antes de terminar e imprime un resumen `[install] ...`.
+
+Para arrancar directamente la imagen instalada:
+
+```bash
+tools/run.sh --image build/meridian-installed.img --no-screenshot
+tools/run.sh --image build/meridian-installed.img --blocktest build/blocktest.img
+```
+
+`--image` sustituye la imagen por defecto (`build/meridian.img`) y `--blocktest`
+el disco QA por defecto (`build/blocktest.img`); sin ellos el comportamiento no
+cambia. Siguen disponibles `--help`, `--timeout`, `--no-screenshot` y
+`--expect-signature-reject`.
+
+`tests/run-install.sh` construye artefactos frescos, instala en
+`build/install/meridian-installed.img`, verifica la GPT con `sgdisk` y los tres
+archivos con `mdir`, arranca la imagen con `tools/run.sh --image ...
+--no-screenshot` y comprueba código `0`, `83/83` marcadores (76 en COM1 y 7
+TLSCAP), `6/6 NETPEER` y `7/7 TLSCAP`. Los logs quedan en `build/install/`
+(`build.log`, `install.log`, `sgdisk.log`, `mdir.log`, `run.log`, además de los
+logs de QEMU, serie y peer).
+
+Salida esperada:
+
+```
+T3.3 install QA PASS: imagen instalada desde cero y arrancada en QEMU (83/83 marcadores)
+```

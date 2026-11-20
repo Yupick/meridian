@@ -86,7 +86,12 @@
 #   TLSCAP: replay rejected PASS
 #
 # Uso:
-#   tools/run.sh [--timeout SEGUNDOS] [--no-screenshot] [--expect-signature-reject]
+#   tools/run.sh [--image RUTA] [--blocktest RUTA] [--timeout SEGUNDOS]
+#                [--no-screenshot] [--expect-signature-reject]
+#
+# Por defecto arranca `build/meridian.img` con `build/blocktest.img`. Con
+# `--image` se puede arrancar una imagen instalada (T3.3) y con `--blocktest`
+# un disco QA alternativo, sin cambiar el comportamiento por defecto.
 #
 # Variables:
 #   MERIDIAN_TIMEOUT        timeout total en segundos (por defecto 45)
@@ -97,6 +102,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${MERIDIAN_BUILD_DIR:-$ROOT/build}"
+# --image / --blocktest permiten sustituir estos valores por defecto.
 IMAGE="$BUILD_DIR/meridian.img"
 BLOCKTEST_IMAGE="$BUILD_DIR/blocktest.img"
 
@@ -128,6 +134,18 @@ while [[ $# -gt 0 ]]; do
             TIMEOUT="$2"
             shift 2
             ;;
+        --image)
+            [[ $# -ge 2 ]] || fail "--image requiere un valor"
+            [[ -n "$2" ]] || fail "--image no puede estar vacío"
+            IMAGE="$2"
+            shift 2
+            ;;
+        --blocktest)
+            [[ $# -ge 2 ]] || fail "--blocktest requiere un valor"
+            [[ -n "$2" ]] || fail "--blocktest no puede estar vacío"
+            BLOCKTEST_IMAGE="$2"
+            shift 2
+            ;;
         --no-screenshot)
             TAKE_SCREENSHOT=0
             shift
@@ -137,7 +155,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,81p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -149,8 +167,8 @@ done
 command -v qemu-system-x86_64 >/dev/null 2>&1 || fail "qemu-system-x86_64 no está instalado"
 command -v socat >/dev/null 2>&1 || fail "socat no está instalado (necesario para el monitor QEMU)"
 command -v python3 >/dev/null 2>&1 || fail "python3 no está instalado (necesario para el peer T2.1)"
-[[ -f "$IMAGE" ]] || fail "no existe $IMAGE; ejecuta tools/build.sh primero"
-[[ -f "$BLOCKTEST_IMAGE" ]] || fail "no existe $BLOCKTEST_IMAGE; ejecuta tools/build.sh primero"
+[[ -f "$IMAGE" ]] || fail "no existe la imagen $IMAGE (--image); ejecuta tools/build.sh o tools/install-image.sh primero"
+[[ -f "$BLOCKTEST_IMAGE" ]] || fail "no existe el disco QA $BLOCKTEST_IMAGE (--blocktest); ejecuta tools/build.sh primero"
 
 # Selección del firmware OVMF.
 OVMF_CODE=""
@@ -193,9 +211,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "firmware: $OVMF_CODE"
-log "imagen:   $IMAGE"
-log "timeout:  ${TIMEOUT}s"
+log "firmware:  $OVMF_CODE"
+log "imagen:    $IMAGE"
+log "blocktest: $BLOCKTEST_IMAGE"
+log "timeout:   ${TIMEOUT}s"
 
 # Peer T2.1: recibe frames del guest en 55124 y envía al guest en 55125.
 if (( !EXPECT_SIGNATURE_REJECT )); then
