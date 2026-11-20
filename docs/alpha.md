@@ -394,3 +394,51 @@ La Alpha se considera cerrada cuando:
   `completed`;
 - se abre el PR `develop -> main` y se etiqueta la versión de cierre de la Alpha
   siguiendo las reglas de GitFlow del plan.
+
+## 9. Estabilización T3.1
+
+Este apartado documenta la QA de carga T3.1 para validar la reproducibilidad
+del arranque UEFI/QEMU, la red UDP dgram y el TLS PSK tras la Fase 2.
+
+### Script `tests/run-load.sh`
+
+Ejecuta múltiples iteraciones de `tests/run-alpha.sh` para detectar flakiness.
+
+**Opciones:**
+
+- `--runs N` — número de iteraciones a ejecutar (default: 5). La variable de
+  entorno `MERIDIAN_LOAD_RUNS` define el valor por defecto; `--runs` la
+  sobrescribe.
+- `--no-screenshot` — si se pasa, cada iteración invoca
+  `tests/run-alpha.sh --no-screenshot` para omitir la captura GOP y acelerar
+  el proceso.
+
+**Funcionamiento:**
+
+1. Antes del primer burn-in, ejecuta `cargo test -p meridian-crypto` una sola vez
+   y guarda la salida en `build/load/crypto.log`.
+2. Limpia `build/load/` para empezar con un estado conocido.
+3. Por cada iteración *i* (1 a N):
+   - ejecuta `tests/run-alpha.sh` (opcionalmente con `--no-screenshot`),
+     capturando la salida en `build/load/alpha-<i>.log`;
+   - comprueba la línea `83/83 marcadores` en el log;
+   - verifica 6/6 eventos `NETPEER` en `build/net-peer.log`;
+   - verifica 7/7 eventos `TLSCAP` en `build/tls-capture.log`;
+   - falla inmediatamente si aparece un marcador `FAIL` del kernel.
+4. Al terminar, imprime el resumen:
+   `T3.1 load QA PASS (N/N iteraciones, 83/83 marcadores por iteración)`.
+
+### Salida esperada
+
+```
+T3.1 load QA PASS (3/3 iteraciones, 83/83 marcadores por iteración)
+```
+
+### Logs generados
+
+- `build/load/crypto.log` — salida de `cargo test -p meridian-crypto`.
+- `build/load/alpha-<i>.log` — salida de cada iteración de `run-alpha.sh`.
+
+La limpieza previa de `build/load/` asegura que no queden restos de iteraciones
+anteriores. Cada iteración delega en `tests/run-alpha.sh`, que limpia sus propios
+procesos QEMU y `net-peer.py`; el script T3.1 no realiza `pkill` global.
