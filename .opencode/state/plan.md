@@ -251,7 +251,8 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 
 - **T3.1 — Estabilización y pruebas de carga** — completed, alta, QA. Dependencias: T2.3.
   - **completed-at:** 2026-11-20 (PR #27 mergeado en develop, commit `ca5c198`; `tests/run-load.sh` ejecuta burn-in de `tests/run-alpha.sh` con verificación de 83/83 marcadores, 6/6 NETPEER y 7/7 TLSCAP por iteración; validado 3/3 iteraciones, `cargo test -p meridian-crypto` y `tests/run-signature.sh` OK; documentado en `docs/alpha.md`)
-- **T3.2 — Documentación de usuario e instalación** — pending, media, Docs. Dependencias: T3.1.
+- **T3.2 — Documentación de usuario e instalación** — completed, media, Docs. Dependencias: T3.1.
+  - **completed-at:** 2026-11-20 (PR #29 mergeado en develop, commit `cd0edcc`; `docs/beta.md` añade guía de usuario/instalación de la beta de servidor con requisitos, construcción, arranque, imagen instalable, QA, uso desde consola, acceso remoto, limitaciones y troubleshooting; `README.md` actualizado con estado de fases, arranque rápido beta, enlaces de documentación y requisitos; todos los comandos documentados existen y `git diff --check` OK)
 - **T3.3 — Imagen instalable** — completed, alta, Backend. Dependencias: T3.1. Criterio: imagen instalada desde cero en QEMU.
   - **completed-at:** 2026-11-20 (PR #28 mergeado en develop, commit `6394949`; `tools/install-image.sh` crea GPT/ESP desde cero sin escribir en `/dev`, `tools/run.sh` acepta `--image`/`--blocktest`, `tests/run-install.sh` verifica GPT/ESP y arranca la imagen instalada en QEMU/OVMF con 83/83 marcadores, 6/6 NETPEER y 7/7 TLSCAP; `tests/run-signature.sh` OK)
 
