@@ -90,6 +90,16 @@ Esto instala QEMU y OVMF, las herramientas de imagen (`sgdisk`, `mtools`,
 de red/TLS), además de Rust con los targets `x86_64-unknown-uefi` y
 `x86_64-unknown-none`. Verifica el entorno con `tools/check-env.sh`.
 
+
+## T4.1 — Compositor y ventanas
+
+
+
+Meridian se encuentra en la fase T4.1 (Compositor y ventanas). Esta fase introduce
+
+un compositor minimalista de escritorio con 2 ventanas, zona de enfoque y primitivas
+
+de framebuffer. El avance se verifica con `tests/run-desktop.sh`.
 ## Licencia
 
 Meridian se distribuye bajo **GNU AGPL v3.0 o posterior**. Ver `LICENSE` y `NOTICE`.

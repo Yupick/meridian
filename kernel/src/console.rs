@@ -8,7 +8,7 @@ use core::fmt;
 
 use meridian_bootinfo::FramebufferInfo;
 
-use crate::framebuffer::{Framebuffer, Rgb};
+use crate::framebuffer::{Rgb, Framebuffer};
 
 /// Dirección del primer UART compatible 16550 en x86-64.
 const COM1: u16 = 0x3F8;
@@ -122,6 +122,11 @@ impl Console {
 
     pub fn framebuffer_active(&self) -> bool {
         self.framebuffer.is_some()
+    }
+
+    /// Devuelve una referencia mutable al framebuffer, si está activo.
+    pub fn framebuffer_mut(&mut self) -> Option<&mut Framebuffer> {
+        self.framebuffer.as_mut()
     }
 
     pub fn screen_width(&self) -> usize {
