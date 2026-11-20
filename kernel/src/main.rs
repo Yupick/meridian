@@ -53,6 +53,8 @@ mod auth;
 // Terminal/shell alpha (A9).
 #[path = "../../services/term/mod.rs"]
 mod term;
+// Compositor y ventanas (T4.1).
+#[path = "../../services/gui/mod.rs"] mod gui;
 // Usuarios con permisos sobre objetos del volumen cifrado (T2.2).
 #[path = "../../services/perm/mod.rs"]
 pub mod perm;
@@ -249,8 +251,16 @@ extern "sysv64" fn kernel_main() -> ! {
         t23_fatal(&mut console);
     }
 
+    // --- T4.1: compositor y ventanas ---
+    if !gui::selftest::run(&mut console) {
+        t41_fatal(&mut console);
+    }
+
     console.set_foreground(OK);
     console.println("Console ready. Halting CPU.");
+
+    // Presentación final del escritorio (última operación de dibujo antes de halt).
+    gui::present(&mut console);
 
     halt()
 }
@@ -323,6 +333,12 @@ fn t22_fatal(console: &mut Console) -> ! {
 fn t23_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "T2.3: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn t41_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "T4.1: SELFTEST FAILED - halting CPU");
     halt()
 }
 
