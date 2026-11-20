@@ -17,6 +17,7 @@ pub const GUEST_IPV6: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 pub const HOST_IPV6: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
 pub const TCP_PORT: u16 = 8080;
 pub const UDP_ECHO_PORT: u16 = 9999;
+pub const TLS_PORT: u16 = 9443;
 pub const TCP_ISN: u32 = 0x1000;
 
 pub const ETHERTYPE_ARP: u16 = 0x0806;
@@ -32,6 +33,8 @@ pub struct Progress {
     pub tcp_synack: bool,
     pub tcp_handshake: bool,
     pub icmpv6: bool,
+    // T2.3 (informativo para el servicio TLS; T2.1 conserva sus campos)
+    pub tls_any: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,11 +196,26 @@ fn handle_udp(payload: &[u8], src: &[u8], progress: &mut Progress) -> Result<(),
     let src_port = u16::from_be_bytes([payload[0], payload[1]]);
     let dst_port = u16::from_be_bytes([payload[2], payload[3]]);
     let udp_len = u16::from_be_bytes([payload[4], payload[5]]) as usize;
+    let data_len = if udp_len >= 8 && udp_len <= payload.len() {
+        udp_len
+    } else {
+        payload.len()
+    };
+    let data = &payload[8..data_len];
+
+    if dst_port == TLS_PORT {
+        let mut src_arr = [0u8; 4];
+        if src.len() == 4 {
+            src_arr.copy_from_slice(src);
+        } else {
+            src_arr.copy_from_slice(&HOST_IPV4);
+        }
+        crate::tls::handle_datagram(src_arr, src_port, data, progress)?;
+        return Ok(());
+    }
     if dst_port != UDP_ECHO_PORT {
         return Ok(());
     }
-    let data_len = if udp_len >= 8 && udp_len <= payload.len() { udp_len } else { payload.len() };
-    let data = &payload[8..data_len];
     let mut out = [0u8; 1480];
     if data_len > out.len() {
         return Ok(());
@@ -211,6 +229,26 @@ fn handle_udp(payload: &[u8], src: &[u8], progress: &mut Progress) -> Result<(),
     send_ipv4(src, 17, &out[..8 + data.len()])?;
     progress.udp = true;
     Ok(())
+}
+
+/// Envía un datagrama UDP IPv4 desde el guest.
+pub fn send_udp(
+    src_port: u16,
+    dst_ip: [u8; 4],
+    dst_port: u16,
+    data: &[u8],
+) -> Result<(), NetStackError> {
+    let mut out = [0u8; 1480];
+    let total = 8 + data.len();
+    if total > out.len() {
+        return Ok(());
+    }
+    out[0..2].copy_from_slice(&src_port.to_be_bytes());
+    out[2..4].copy_from_slice(&dst_port.to_be_bytes());
+    out[4..6].copy_from_slice(&(total as u16).to_be_bytes());
+    out[6..8].copy_from_slice(&0u16.to_be_bytes());
+    out[8..8 + data.len()].copy_from_slice(data);
+    send_ipv4(&dst_ip, 17, &out[..total])
 }
 
 fn handle_tcp(payload: &[u8], src: &[u8], progress: &mut Progress) -> Result<(), NetStackError> {
@@ -311,7 +349,7 @@ fn handle_icmpv6(payload: &[u8], src: &[u8], progress: &mut Progress) -> Result<
     Ok(())
 }
 
-fn send_ipv4(dst_ip: &[u8], proto: u8, payload: &[u8]) -> Result<(), NetStackError> {
+pub(crate) fn send_ipv4(dst_ip: &[u8], proto: u8, payload: &[u8]) -> Result<(), NetStackError> {
     let mut frame = [0u8; 1514];
     let ihl = 20usize;
     let total_len = ihl + payload.len();

@@ -2,6 +2,7 @@ use meridian_crypto::aes::Aes;
 use meridian_crypto::argon2::{argon2id, blocks_required, Argon2Error};
 use meridian_crypto::blake2b::{variable, Blake2bHasher};
 use meridian_crypto::ed25519::{secret_to_public, sign, verify};
+use meridian_crypto::gcm::Aes128Gcm;
 use meridian_crypto::sha256::hash as sha256;
 use meridian_crypto::sha512::hash as sha512;
 use meridian_crypto::xts::XtsAes;
@@ -358,4 +359,39 @@ fn ed25519_rfc_8032_vectors() {
             vector.name
         );
     }
+}
+
+#[test]
+fn aes128_gcm_nist_sp_800_38d_vector() {
+    let key = hex::<16>("feffe9928665731c6d6a8f9467308308");
+    let iv = hex::<12>("cafebabefacedbaddecaf888");
+    // Mandatory vector inputs as specified (key/IV/AAD/plaintext) with correct
+    // AES-128-GCM outputs for those inputs.
+    let aad = hex::<20>("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+    let plaintext = hex::<60>(
+        "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
+    );
+    let expected_ct = hex::<60>(
+        "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091",
+    );
+    let expected_tag = hex::<16>("5bc94fbc3221a5db94fae95ae7121a47");
+
+    let gcm = Aes128Gcm::new(&key);
+    let mut ct = [0u8; 60];
+    let mut tag = [0u8; 16];
+    gcm.encrypt(&iv, &aad, &plaintext, &mut ct, &mut tag);
+    assert_eq!(ct, expected_ct);
+    assert_eq!(tag, expected_tag);
+
+    let mut pt = [0u8; 60];
+    assert!(gcm.decrypt(&iv, &aad, &ct, &tag, &mut pt));
+    assert_eq!(pt, plaintext);
+
+    let mut bad_tag = tag;
+    bad_tag[0] ^= 0x01;
+    assert!(!gcm.decrypt(&iv, &aad, &ct, &bad_tag, &mut pt));
+
+    let mut bad_aad = aad;
+    bad_aad[0] ^= 0x01;
+    assert!(!gcm.decrypt(&iv, &bad_aad, &ct, &tag, &mut pt));
 }

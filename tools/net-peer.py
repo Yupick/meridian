@@ -1,23 +1,34 @@
 #!/usr/bin/env python3
-"""Host-side QA peer for Meridian T2.1 network selftest.
+"""Host-side QA peer for Meridian T2.1/T2.3 network selftests.
 
 Receives/sends raw Ethernet frames over a QEMU UDP dgram backend (no TAP/root).
 Binds 127.0.0.1:55124 and peers with 127.0.0.1:55125.
-Writes exact NETPEER PASS lines to build/net-peer.log and exits 0 only when all
-six events are observed.
+
+T2.1: generates ARP/ICMPv4/UDP/TCP/ICMPv6 traffic and writes exact NETPEER PASS
+lines to build/net-peer.log (6 events).
+T2.3: after T2.1 completes, performs TLS 1.3 PSK profile over UDP/9443
+(handshake, Finished, allowed/denied reads, replay) and writes exact TLSCAP
+events to build/tls-capture.log (7 events).
+
+Exits 0 only when all required T2.1 and T2.3 events are observed.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import os
 import select
 import socket
 import struct
 import sys
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# --- T2.1 constants ---
 GUEST_MAC = bytes.fromhex("525400000015")
 HOST_MAC = bytes.fromhex("525400000002")
 BROADCAST_MAC = b"\xff\xff\xff\xff\xff\xff"
@@ -27,11 +38,19 @@ GUEST_IPV6 = socket.inet_pton(socket.AF_INET6, "fd00::15")
 HOST_IPV6 = socket.inet_pton(socket.AF_INET6, "fd00::2")
 TCP_PORT = 8080
 UDP_ECHO_PORT = 9999
+TLS_PORT = 9443
 TCP_ISN = 0x1000
 
 ETH_ARP = 0x0806
 ETH_IPV4 = 0x0800
 ETH_IPV6 = 0x86DD
+
+# --- T2.3 constants ---
+MAGIC = b"MRSTLS13"
+CT_HANDSHAKE = 0x16
+CT_APP = 0x17
+CT_FINISHED = 20
+CT_ALERT_APP = 21
 
 
 def checksum(data: bytes) -> int:
@@ -52,25 +71,17 @@ def eth_header(dst: bytes, src: bytes, ethertype: int) -> bytes:
 def build_arp_request() -> bytes:
     arp = struct.pack(
         "!HHBBH6s4s6s4s",
-        1,  # htype Ethernet
+        1,
         ETH_IPV4,
         6,
         4,
-        1,  # request
+        1,
         HOST_MAC,
         HOST_IPV4,
         BROADCAST_MAC,
         GUEST_IPV4,
     )
     return eth_header(BROADCAST_MAC, HOST_MAC, ETH_ARP) + arp
-
-
-def build_icmp_echo_request(ident: int, seq: int, payload: bytes) -> bytes:
-    icmp = struct.pack("!BBHHH", 8, 0, 0, ident & 0xFFFF, seq & 0xFFFF) + payload
-    csum = checksum(icmp)
-    icmp = struct.pack("!BBHHH", 8, 0, csum, ident & 0xFFFF, seq & 0xFFFF) + payload
-    ip = build_ipv4_packet(HOST_IPV4, GUEST_IPV4, 1, icmp, ident & 0xFFFF)
-    return eth_header(GUEST_MAC, HOST_MAC, ETH_IPV4) + ip
 
 
 def build_ipv4_packet(src: bytes, dst: bytes, proto: int, payload: bytes, identification: int) -> bytes:
@@ -105,11 +116,23 @@ def build_ipv4_packet(src: bytes, dst: bytes, proto: int, payload: bytes, identi
     return header + payload
 
 
-def build_udp_echo_request(src_port: int, payload: bytes) -> bytes:
-    udp_len = 8 + len(payload)
-    udp = struct.pack("!HHHH", src_port, UDP_ECHO_PORT, udp_len, 0) + payload
-    ip = build_ipv4_packet(HOST_IPV4, GUEST_IPV4, 17, udp, 0x3344)
+def build_icmp_echo_request(ident: int, seq: int, payload: bytes) -> bytes:
+    icmp = struct.pack("!BBHHH", 8, 0, 0, ident & 0xFFFF, seq & 0xFFFF) + payload
+    csum = checksum(icmp)
+    icmp = struct.pack("!BBHHH", 8, 0, csum, ident & 0xFFFF, seq & 0xFFFF) + payload
+    ip = build_ipv4_packet(HOST_IPV4, GUEST_IPV4, 1, icmp, ident & 0xFFFF)
     return eth_header(GUEST_MAC, HOST_MAC, ETH_IPV4) + ip
+
+
+def build_udp_datagram(src_port: int, dst_port: int, payload: bytes, identification: int = 0x3344) -> bytes:
+    udp_len = 8 + len(payload)
+    udp = struct.pack("!HHHH", src_port, dst_port, udp_len, 0) + payload
+    ip = build_ipv4_packet(HOST_IPV4, GUEST_IPV4, 17, udp, identification)
+    return eth_header(GUEST_MAC, HOST_MAC, ETH_IPV4) + ip
+
+
+def build_udp_echo_request(src_port: int, payload: bytes) -> bytes:
+    return build_udp_datagram(src_port, UDP_ECHO_PORT, payload, 0x3344)
 
 
 def tcp_checksum(src: bytes, dst: bytes, tcp_segment: bytes) -> int:
@@ -118,65 +141,21 @@ def tcp_checksum(src: bytes, dst: bytes, tcp_segment: bytes) -> int:
 
 
 def build_tcp_syn(seq: int, src_port: int) -> bytes:
-    data_offset = (5 << 4)
-    flags = 0x02  # SYN
-    tcp = struct.pack(
-        "!HHIIBBHHH",
-        src_port,
-        TCP_PORT,
-        seq,
-        0,
-        data_offset,
-        flags,
-        4096,
-        0,
-        0,
-    )
+    data_offset = 5 << 4
+    flags = 0x02
+    tcp = struct.pack("!HHIIBBHHH", src_port, TCP_PORT, seq, 0, data_offset, flags, 4096, 0, 0)
     csum = tcp_checksum(HOST_IPV4, GUEST_IPV4, tcp)
-    tcp = struct.pack(
-        "!HHIIBBHHH",
-        src_port,
-        TCP_PORT,
-        seq,
-        0,
-        data_offset,
-        flags,
-        4096,
-        csum,
-        0,
-    )
+    tcp = struct.pack("!HHIIBBHHH", src_port, TCP_PORT, seq, 0, data_offset, flags, 4096, csum, 0)
     ip = build_ipv4_packet(HOST_IPV4, GUEST_IPV4, 6, tcp, 0x4455)
     return eth_header(GUEST_MAC, HOST_MAC, ETH_IPV4) + ip
 
 
 def build_tcp_ack(seq: int, ack: int, src_port: int) -> bytes:
-    data_offset = (5 << 4)
-    flags = 0x10  # ACK
-    tcp = struct.pack(
-        "!HHIIBBHHH",
-        src_port,
-        TCP_PORT,
-        seq,
-        ack,
-        data_offset,
-        flags,
-        4096,
-        0,
-        0,
-    )
+    data_offset = 5 << 4
+    flags = 0x10
+    tcp = struct.pack("!HHIIBBHHH", src_port, TCP_PORT, seq, ack, data_offset, flags, 4096, 0, 0)
     csum = tcp_checksum(HOST_IPV4, GUEST_IPV4, tcp)
-    tcp = struct.pack(
-        "!HHIIBBHHH",
-        src_port,
-        TCP_PORT,
-        seq,
-        ack,
-        data_offset,
-        flags,
-        4096,
-        csum,
-        0,
-    )
+    tcp = struct.pack("!HHIIBBHHH", src_port, TCP_PORT, seq, ack, data_offset, flags, 4096, csum, 0)
     ip = build_ipv4_packet(HOST_IPV4, GUEST_IPV4, 6, tcp, 0x4456)
     return eth_header(GUEST_MAC, HOST_MAC, ETH_IPV4) + ip
 
@@ -219,28 +198,260 @@ def parse_ipv4(packet: bytes) -> Tuple[bytes, bytes, int, bytes]:
     return src, dst, proto, packet[ihl:end]
 
 
+# --- T2.3 helpers ---
+
+def hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
+    return hmac.new(salt, ikm, hashlib.sha256).digest()
+
+
+def hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
+    t1 = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
+    return t1[:length]
+
+
+def make_nonce(iv: bytes, seq: int) -> bytes:
+    n = bytearray(iv)
+    s = struct.pack("!Q", seq)
+    for i in range(8):
+        n[4 + i] ^= s[i]
+    return bytes(n)
+
+
+def seal_record(key: bytes, iv: bytes, seq: int, content_type: int, plaintext: bytes) -> bytes:
+    body = AESGCM(key).encrypt(
+        make_nonce(iv, seq), plaintext, struct.pack("!BHH", content_type, 0x0303, len(plaintext) + 16)
+    )
+    header = struct.pack("!BHH", content_type, 0x0303, len(body))
+    return header + body
+
+
+def open_record(key: bytes, iv: bytes, seq: int, record: bytes) -> Tuple[int, bytes]:
+    if len(record) < 21:
+        raise ValueError("record too short")
+    ctype, ver, rlen = struct.unpack("!BHH", record[:5])
+    if ver != 0x0303 or 5 + rlen != len(record):
+        raise ValueError("bad record")
+    aad = record[:5]
+    body = record[5:]
+    pt = AESGCM(key).decrypt(make_nonce(iv, seq), body, aad)
+    return ctype, pt
+
+
+class TlsClient:
+    def __init__(self, peer: Tuple[str, int], log_path: str):
+        self.peer = peer
+        self.log_path = log_path
+        self.events: List[str] = []
+        self._init_log()
+
+        self.psk = hashlib.sha256(b"meridian-tls13-dev-psk-v1").digest()
+        self.client_random = hashlib.sha256(b"meridian-tls-client-random-v1").digest()
+
+        self.stage = "ch"  # ch -> await_allowed -> await_denied -> await_replay -> done
+        self.client_seq = 1
+        self.server_seq = 1
+        self.keys = None  # (c_key,c_iv,s_key,s_iv,fin_key)
+        self.transcript_hash = b""
+        self.server_random = b""
+        self.last_send = 0.0
+        self.done = False
+
+    def _init_log(self) -> None:
+        os.makedirs(os.path.dirname(self.log_path) or ".", exist_ok=True)
+        with open(self.log_path, "w", encoding="utf-8"):
+            pass
+
+    def log(self, line: str) -> None:
+        if line in self.events:
+            return
+        self.events.append(line)
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+            f.flush()
+
+    def all_done(self) -> bool:
+        needed = [
+            "TLSCAP: ClientHello observed",
+            "TLSCAP: ServerHello verified",
+            "TLSCAP: Finished verified",
+            "TLSCAP: application ciphertext captured",
+            "TLSCAP: encrypted read allowed PASS",
+            "TLSCAP: encrypted read denied PASS",
+            "TLSCAP: replay rejected PASS",
+        ]
+        return all(e in self.events for e in needed)
+
+    def build_client_hello(self) -> bytes:
+        payload = MAGIC + bytes([1]) + self.client_random + bytes([0])
+        return struct.pack("!BHH", CT_HANDSHAKE, 0x0303, len(payload)) + payload
+
+    def derive_keys(self, server_payload_no_verify: bytes, verify: bytes) -> bool:
+        ch_payload = MAGIC + bytes([1]) + self.client_random + bytes([0])
+        prefix = ch_payload + server_payload_no_verify
+        self.transcript_hash = hashlib.sha256(prefix).digest()
+
+        early = hkdf_extract(b"\x00" * 32, self.psk)
+        hs_info = b"meridian tls13 handshake" + self.transcript_hash
+        hs = hkdf_expand(early, hs_info, 32)
+        c_key = hkdf_expand(hs, b"meridian tls13 c key", 16)
+        c_iv = hkdf_expand(hs, b"meridian tls13 c iv", 12)
+        s_key = hkdf_expand(hs, b"meridian tls13 s key", 16)
+        s_iv = hkdf_expand(hs, b"meridian tls13 s iv", 12)
+        fin_key = hkdf_expand(hs, b"meridian tls13 finished", 32)
+        expected_verify = hmac.new(fin_key, self.transcript_hash, hashlib.sha256).digest()[:16]
+        if expected_verify != verify:
+            return False
+        expected_sr = hashlib.sha256(b"meridian-tls-server-random-v1" + self.client_random).digest()
+        if self.server_random != expected_sr:
+            return False
+        self.keys = (c_key, c_iv, s_key, s_iv, fin_key)
+        return True
+
+    def build_finished(self) -> bytes:
+        assert self.keys is not None
+        c_key, c_iv, _s_key, _s_iv, fin_key = self.keys
+        fin_plain = hmac.new(fin_key, b"client finished" + self.transcript_hash, hashlib.sha256).digest()[:16]
+        rec = seal_record(c_key, c_iv, self.client_seq, CT_FINISHED, fin_plain)
+        self.client_seq += 1
+        return rec
+
+    def build_request(self, user: bytes, key: int, rights: int, req_seq: int) -> bytes:
+        assert self.keys is not None
+        c_key, c_iv, *_ = self.keys
+        pt = b"REQ\0" + bytes([len(user)]) + user + struct.pack("!QBQ", key, rights, req_seq)
+        rec = seal_record(c_key, c_iv, self.client_seq, CT_APP, pt)
+        self.client_seq += 1
+        return rec
+
+    def send_frame(self, sock: socket.socket, udp_payload: bytes) -> None:
+        frame = build_udp_datagram(45000, TLS_PORT, udp_payload, 0x5500 + (self.client_seq & 0xFF))
+        sock.sendto(frame, self.peer)
+
+    def on_tick(self, sock: socket.socket, now: float) -> None:
+        if self.all_done():
+            self.done = True
+            return
+        if now - self.last_send < 0.25:
+            return
+        # Only retransmit ClientHello (plaintext, idempotent for server). Do not
+        # retransmit encrypted app records to avoid request-seq replay.
+        if self.stage == "ch":
+            self.send_frame(sock, self.build_client_hello())
+            self.last_send = now
+
+    def start_application(self, sock: socket.socket) -> None:
+        # Send Finished once, then first application request.
+        fin = self.build_finished()
+        self.send_frame(sock, fin)
+        # El Finished se considera verificado solo cuando el guest responde con
+        # un registro cifrado que solo puede derivarse tras aceptarlo.
+        req = self.build_request(b"alice", 13, 1, 1)
+        self.send_frame(sock, req)
+        self.stage = "await_allowed"
+        self.last_send = time.monotonic()
+
+    def handle_tls_record(self, sock: socket.socket, udp_payload: bytes) -> None:
+        if self.all_done():
+            self.done = True
+            return
+        if len(udp_payload) < 5:
+            return
+        ctype = udp_payload[0]
+
+        if self.stage == "ch" and ctype == CT_HANDSHAKE and len(udp_payload) >= 5 + 58:
+            payload = udp_payload[5:5 + 58]
+            if payload[:8] == MAGIC and payload[8] == 2 and payload[41] == 0:
+                self.log("TLSCAP: ClientHello observed")
+                self.server_random = payload[9:41]
+                verify = payload[42:58]
+                if self.derive_keys(payload[:41], verify):
+                    self.log("TLSCAP: ServerHello verified")
+                    self.start_application(sock)
+            return
+
+        if self.keys is None:
+            return
+        _c_key, _c_iv, s_key, s_iv, _fin_key = self.keys
+
+        if ctype in (CT_APP, CT_ALERT_APP, CT_FINISHED):
+            try:
+                rctype, pt = open_record(s_key, s_iv, self.server_seq, udp_payload)
+            except Exception:
+                return
+            self.server_seq += 1
+
+            # Primera respuesta cifrada válida: el guest aceptó el Finished.
+            self.log("TLSCAP: Finished verified")
+
+            if rctype == CT_APP and "TLSCAP: application ciphertext captured" not in self.events:
+                if b"remote-notice-v1" not in udp_payload:
+                    short = hashlib.sha256(udp_payload).hexdigest()[:16]
+                    self.log(
+                        f"TLSCAP: application ciphertext captured hash={short} cleartext_absent=true"
+                    )
+
+            if rctype == CT_ALERT_APP and pt == b"replay":
+                self.log("TLSCAP: replay rejected PASS")
+                self.stage = "done"
+                self.done = self.all_done()
+                return
+
+            if rctype == CT_APP and pt.startswith(b"RES\0") and len(pt) >= 6:
+                status = pt[4]
+                ulen = pt[5]
+                if len(pt) < 6 + ulen + 8 + 2:
+                    return
+                user = pt[6:6 + ulen]
+                off = 6 + ulen
+                obj_key = struct.unpack("!Q", pt[off:off + 8])[0]
+                off += 8
+                vlen = struct.unpack("!H", pt[off:off + 2])[0]
+                off += 2
+                value = pt[off:off + vlen]
+
+                if self.stage == "await_allowed":
+                    if user == b"alice" and obj_key == 13 and status == 1 and value == b"remote-notice-v1":
+                        self.log("TLSCAP: encrypted read allowed PASS")
+                        # denied request: guest, key 10, READ, req_seq 2
+                        req = self.build_request(b"guest", 10, 1, 2)
+                        self.send_frame(sock, req)
+                        self.stage = "await_denied"
+                        self.last_send = time.monotonic()
+                    return
+
+                if self.stage == "await_denied":
+                    if user == b"guest" and obj_key == 10 and status == 0:
+                        self.log("TLSCAP: encrypted read denied PASS")
+                        # replay: same inner req_seq 2 as new TLS record
+                        req = self.build_request(b"guest", 10, 1, 2)
+                        self.send_frame(sock, req)
+                        self.stage = "await_replay"
+                        self.last_send = time.monotonic()
+                    return
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Meridian T2.1 host UDP network peer")
+    parser = argparse.ArgumentParser(description="Meridian T2.1/T2.3 host UDP network peer")
     parser.add_argument("--bind-host", default="127.0.0.1")
     parser.add_argument("--bind-port", type=int, default=55124)
     parser.add_argument("--peer-host", default="127.0.0.1")
     parser.add_argument("--peer-port", type=int, default=55125)
     parser.add_argument("--log", default="build/net-peer.log")
-    parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument("--tls-log", default="build/tls-capture.log")
+    parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
-    log_lines: List[str] = []
+    net_lines: List[str] = []
 
-    def write_log(line: str) -> None:
-        if line in log_lines:
+    def write_net(line: str) -> None:
+        if line in net_lines:
             return
-        log_lines.append(line)
+        net_lines.append(line)
         with open(args.log, "a", encoding="utf-8") as f:
             f.write(line + "\n")
             f.flush()
 
-    # Truncate/create log at start.
     with open(args.log, "w", encoding="utf-8"):
         pass
 
@@ -265,6 +476,8 @@ def main() -> int:
     tcp_seq = 0x22334455
     tcp_src_port = 40001
 
+    tls = TlsClient(peer, args.tls_log)
+
     start = time.monotonic()
     last_send = 0.0
     deadline = start + args.timeout
@@ -273,7 +486,6 @@ def main() -> int:
         while time.monotonic() < deadline:
             now = time.monotonic()
             if now - last_send >= 0.2:
-                # Resend outstanding requests.
                 if not seen["arp"]:
                     sock.sendto(build_arp_request(), peer)
                 if not seen["icmp"]:
@@ -287,7 +499,9 @@ def main() -> int:
                 last_send = now
 
             if all(seen.values()):
-                return 0
+                tls.on_tick(sock, now)
+                if tls.all_done():
+                    return 0
 
             rlist, _, _ = select.select([sock], [], [], 0.05)
             if not rlist:
@@ -296,13 +510,26 @@ def main() -> int:
                 data, _addr = sock.recvfrom(65535)
             except BlockingIOError:
                 continue
-            handle_frame(data, sock, peer, seen, write_log, udp_payload, udp_src_port, tcp_seq, tcp_src_port)
 
-        if not all(seen.values()):
-            missing = [k for k, v in seen.items() if not v]
-            sys.stderr.write(f"NETPEER: TIMEOUT missing={','.join(missing)}\n")
-            return 1
-        return 0
+            handle_frame(
+                data,
+                sock,
+                peer,
+                seen,
+                write_net,
+                udp_payload,
+                udp_src_port,
+                tcp_seq,
+                tcp_src_port,
+                tls if all(seen.values()) else None,
+            )
+
+        missing_net = [k for k, v in seen.items() if not v]
+        if missing_net:
+            sys.stderr.write(f"NETPEER: TIMEOUT missing={','.join(missing_net)}\n")
+        if not tls.all_done():
+            sys.stderr.write("TLSCAP: TIMEOUT missing events\n")
+        return 1
     finally:
         sock.close()
 
@@ -317,6 +544,7 @@ def handle_frame(
     udp_src_port: int,
     tcp_seq: int,
     tcp_src_port: int,
+    tls: Optional[TlsClient],
 ) -> None:
     if len(frame) < 14:
         return
@@ -352,10 +580,13 @@ def handle_frame(
             if sport == UDP_ECHO_PORT and dport == udp_src_port and data == udp_payload:
                 seen["udp"] = True
                 write_log("NETPEER: UDP echo reply PASS")
+                return
+            if sport == TLS_PORT and dport == 45000 and tls is not None:
+                tls.handle_tls_record(sock, data)
+                return
             return
         if proto == 6 and len(ip_payload) >= 20:
             sport, dport, seq, ack, off_flags = struct.unpack("!HHIIH", ip_payload[:14])
-            data_off = ((off_flags >> 12) & 0xF) * 4
             flags = off_flags & 0x3F
             if sport == TCP_PORT and dport == tcp_src_port:
                 if flags & 0x12 == 0x12 and seq == TCP_ISN and ack == (tcp_seq + 1) & 0xFFFFFFFF:
