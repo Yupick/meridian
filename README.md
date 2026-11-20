@@ -21,10 +21,10 @@ Fase 2 completada — tag `v0.3.0-network`: pila de red virtio-net (T2.1),
 grupos y ACLs sobre el volumen cifrado (T2.2) y acceso remoto cifrado TLS 1.3
 PSK dev-only (T2.3).
 
-Fase 3 (beta de servidor) en curso: T3.1 (estabilización) y T3.3 (imagen
-instalable) completados; la documentación de usuario e instalación (T3.2) vive
-en `docs/beta.md`. La beta **no es apta para datos sensibles** hasta la
-auditoría de la Fase 8.
+Fase 3 (beta de servidor) completada — tag `v0.4.0-beta`: estabilización con
+burn-in (T3.1), guía de usuario e instalación (T3.2) e imagen instalable
+verificada desde cero en QEMU/OVMF (T3.3). La beta **no es apta para datos
+sensibles** hasta la auditoría de la Fase 8. Ver `docs/beta.md`.
 
 ## Arranque rápido (beta de servidor)
 
