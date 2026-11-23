@@ -26,6 +26,11 @@ burn-in (T3.1), guía de usuario e instalación (T3.2) e imagen instalable
 verificada desde cero en QEMU/OVMF (T3.3). La beta **no es apta para datos
 sensibles** hasta la auditoría de la Fase 8. Ver `docs/beta.md`.
 
+Fase 4 (escritorio y gráficos) completada — tag `v0.5.0-desktop`: compositor con
+dos ventanas y foco (T4.1), driver GPU userspace con fallo aislado (T4.2) y
+terminal interactiva con reflejo GUI (T4.3), verificados en QEMU/OVMF sin romper
+el QA 83/83 de la beta.
+
 ## Arranque rápido (beta de servidor)
 
 ```bash
