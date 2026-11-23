@@ -71,7 +71,13 @@ fn temp_hash(password: &[u8], salt: u64) -> [u8; HASH_LEN] {
     // Varias rondas mezclando bytes y posición para producir HASH_LEN bytes.
     let mut round: u64 = 0;
     while i < HASH_LEN {
-        let p = password[i % password.len().max(1)];
+        // Una contraseña vacía es válida como entrada (debe rechazarse en
+        // `login`, no provocar un panic al indexar un slice vacío).
+        let p = if password.is_empty() {
+            0
+        } else {
+            password[i % password.len()]
+        };
         state ^= p as u64;
         state = state.wrapping_mul(0x100000001b3);
         state ^= round.wrapping_add(i as u64);

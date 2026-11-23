@@ -56,9 +56,18 @@ fn run_inner(console: &mut Console) -> Result<(), &'static str> {
     if err_unknown != Some(auth::AuthError::InvalidCredentials) {
         return Err("usuario inexistente no devolvió el mismo error genérico");
     }
+    // Las credenciales vacías deben rechazarse como credenciales inválidas,
+    // sin provocar un panic al derivar el hash de una contraseña vacía.
+    let err_empty_user = auth::login("", "meridian", &admin_caps, FS_SLOT).err();
+    let err_empty_pass = auth::login("root", "", &admin_caps, FS_SLOT).err();
+    if err_empty_user != Some(auth::AuthError::InvalidCredentials)
+        || err_empty_pass != Some(auth::AuthError::InvalidCredentials)
+    {
+        return Err("credenciales vacías no devolvieron error genérico");
+    }
     let _ = writeln!(
         console,
-        "A8: invalid credentials rejected without user disclosure (wrong-pass == unknown-user == InvalidCredentials)"
+        "A8: invalid credentials rejected without user disclosure (wrong-pass == unknown-user == empty-user == empty-pass == InvalidCredentials)"
     );
 
     // Tras login, el usuario tiene capacidades sobre su directorio personal.
