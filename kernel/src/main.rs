@@ -53,6 +53,10 @@ mod auth;
 // Terminal/shell alpha (A9).
 #[path = "../../services/term/mod.rs"]
 mod term;
+// Compositor y ventanas (T4.1).
+#[path = "../../services/gui/mod.rs"] mod gui;
+// Driver de GPU en espacio de usuario (T4.2).
+#[path = "../../services/gpu/mod.rs"] mod gpu;
 // Usuarios con permisos sobre objetos del volumen cifrado (T2.2).
 #[path = "../../services/perm/mod.rs"]
 pub mod perm;
@@ -249,10 +253,128 @@ extern "sysv64" fn kernel_main() -> ! {
         t23_fatal(&mut console);
     }
 
-    console.set_foreground(OK);
-    console.println("Console ready. Halting CPU.");
+    // --- T4.1: compositor y ventanas ---
+    if !gui::selftest::run(&mut console) {
+        t41_fatal(&mut console);
+    }
 
-    halt()
+    // --- T4.2: driver de GPU en espacio de usuario ---
+    // Un fallo del driver se informa y se reinicia, pero NO detiene el kernel.
+    console.println("");
+    let _ = gpu::selftest::run(&mut console);
+
+    // --- T4.3: terminal interactiva (solo con la feature `interactive`) -----
+    #[cfg(feature = "interactive")]
+    {
+        use crate::cap::{Capability, CapTable, Rights};
+        use crate::fs::FS_OBJECT_ID;
+
+        let _ = writeln!(console, "T4.3: terminal interactiva activa (COM1)");
+        let _ = writeln!(console, "T4.3: login prompt listo");
+
+        // Capacidades FS con las que `auth::login` resuelve el directorio home.
+        let mut admin_caps = CapTable::new();
+        let _ = admin_caps.insert(
+            auth::SESSION_FS_SLOT,
+            Capability {
+                object: FS_OBJECT_ID,
+                rights: Rights::READ.union(Rights::WRITE),
+            },
+        );
+
+        // Credenciales dev-only: root / meridian (registradas por los selftests).
+        let mut session = None;
+        let mut attempt = 0usize;
+        while attempt < 3 && session.is_none() {
+            attempt += 1;
+
+            console.write_text("login: ");
+            let mut user = [0u8; 64];
+            let user_len = console.read_line_echo(&mut user, true);
+
+            console.write_text("Password: ");
+            let mut password = [0u8; 64];
+            let pass_len = console.read_line_echo(&mut password, false);
+
+            // Nunca se escribe la contraseña: solo se usa para autenticar.
+            let name = core::str::from_utf8(&user[..user_len]).unwrap_or("");
+            let secret = core::str::from_utf8(&password[..pass_len]).unwrap_or("");
+            match auth::login(name, secret, &admin_caps, auth::SESSION_FS_SLOT) {
+                Ok(s) if s.username_bytes() == b"root" => {
+                    let _ = writeln!(console, "T4.3: login correcto (user=root)");
+                    session = Some(s);
+                }
+                _ => {
+                    let _ = writeln!(console, "T4.3: credenciales invalidas rechazadas");
+                }
+            }
+        }
+
+        let Some(session) = session else {
+            let _ = writeln!(console, "T4.3: sesion finalizada; halt");
+            let empty = [""; 6];
+            gui::present_terminal(&mut console, &empty);
+            halt();
+        };
+
+        let mut shell = term::Shell::new(session);
+        let mut line = [0u8; 256];
+        let mut first_prompt = true;
+
+        loop {
+            shell.prompt(&mut console);
+            if first_prompt {
+                let _ = writeln!(console, "T4.3: prompt listo meridian:/home/root$");
+                first_prompt = false;
+            }
+
+            let len = console.read_line_echo(&mut line, true);
+            if len == 0 {
+                continue;
+            }
+            let Ok(cmd) = core::str::from_utf8(&line[..len]) else { continue };
+
+            // Compone "meridian:/home/root$ <cmd>" sin heap para la ventana.
+            let mut display = [0u8; 64];
+            let prefix = b"meridian:/home/root$ ";
+            let mut n = 0usize;
+            while n < prefix.len() && n < display.len() {
+                display[n] = prefix[n];
+                n += 1;
+            }
+            let mut i = 0usize;
+            while i < cmd.len() && n < display.len() {
+                display[n] = cmd.as_bytes()[i];
+                n += 1;
+                i += 1;
+            }
+            let command_line = core::str::from_utf8(&display[..n]).unwrap_or("");
+            let view = [command_line, "", "", "", "", ""];
+            gui::present_terminal(&mut console, &view);
+
+            let result = shell.execute(&mut console, cmd);
+            let _ = writeln!(console, "T4.3: cmd '{}' -> GUI terminal", cmd);
+            if result == term::ExecResult::Exit {
+                break;
+            }
+        }
+
+        let final_view = ["sesion finalizada", "", "", "", "", ""];
+        let _ = writeln!(console, "T4.3: sesion finalizada; halt");
+        gui::present_terminal(&mut console, &final_view);
+        halt();
+    }
+
+    #[cfg(not(feature = "interactive"))]
+    {
+        console.set_foreground(OK);
+        console.println("Console ready. Halting CPU.");
+
+        // Presentación final del escritorio (última operación de dibujo antes de halt).
+        gui::present(&mut console);
+
+        halt()
+    }
 }
 
 fn read_rsp() -> u64 {
@@ -323,6 +445,12 @@ fn t22_fatal(console: &mut Console) -> ! {
 fn t23_fatal(console: &mut Console) -> ! {
     console.set_foreground(WARN);
     let _ = writeln!(console, "T2.3: SELFTEST FAILED - halting CPU");
+    halt()
+}
+
+fn t41_fatal(console: &mut Console) -> ! {
+    console.set_foreground(WARN);
+    let _ = writeln!(console, "T4.1: SELFTEST FAILED - halting CPU");
     halt()
 }
 

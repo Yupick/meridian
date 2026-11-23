@@ -8,7 +8,7 @@ use core::fmt;
 
 use meridian_bootinfo::FramebufferInfo;
 
-use crate::framebuffer::{Framebuffer, Rgb};
+use crate::framebuffer::{Rgb, Framebuffer};
 
 /// Dirección del primer UART compatible 16550 en x86-64.
 const COM1: u16 = 0x3F8;
@@ -52,6 +52,18 @@ impl Serial {
         // SAFETY: escritura del registro TX del 16550 en COM1.
         unsafe {
             outb(COM1, byte);
+        }
+    }
+
+    /// Lee un byte del receptor si hay datos disponibles; nunca bloquea.
+    pub fn try_read_byte(&mut self) -> Option<u8> {
+        // SAFETY: lectura del registro LSR del 16550 en COM1; si DR (bit 0)
+        // está activo, el byte espera en el registro RBR (COM1 + 0).
+        if unsafe { inb(COM1 + 5) } & 0x01 != 0 {
+            // SAFETY: lectura del registro RBR del 16550 en COM1.
+            Some(unsafe { inb(COM1) })
+        } else {
+            None
         }
     }
 
@@ -124,6 +136,11 @@ impl Console {
         self.framebuffer.is_some()
     }
 
+    /// Devuelve una referencia mutable al framebuffer, si está activo.
+    pub fn framebuffer_mut(&mut self) -> Option<&mut Framebuffer> {
+        self.framebuffer.as_mut()
+    }
+
     pub fn screen_width(&self) -> usize {
         self.screen_width
     }
@@ -169,6 +186,60 @@ impl Console {
                 }
             }
         }
+    }
+
+    /// Lee un byte de COM1 si está disponible (no bloqueante).
+    pub fn try_read_byte(&mut self) -> Option<u8> {
+        self.serial.try_read_byte()
+    }
+
+    /// Lee una línea terminada en CR/LF y devuelve su longitud real.
+    ///
+    /// El buffer queda terminado en 0. Se aceptan backspace ASCII (0x7f/0x08),
+    /// se ignoran los bytes no imprimibles y se limita la escritura a
+    /// `buf.len() - 1`. El eco va solo por COM1: con `echo == false` no se
+    /// muestra ningún carácter (ni los borrados), para no revelar contraseñas.
+    /// El CRLF final no revela contenido ni longitud de la entrada.
+    pub fn read_line_echo(&mut self, buf: &mut [u8], echo: bool) -> usize {
+        if buf.is_empty() {
+            return 0;
+        }
+        let max = buf.len() - 1;
+        let mut len = 0usize;
+        loop {
+            let Some(byte) = self.try_read_byte() else {
+                core::hint::spin_loop();
+                continue;
+            };
+            match byte {
+                b'\r' | b'\n' => {
+                    self.serial.write_crlf();
+                    break;
+                }
+                0x7f | 0x08 => {
+                    if len > 0 {
+                        len -= 1;
+                        if echo {
+                            self.serial.write_byte(0x08);
+                            self.serial.write_byte(b' ');
+                            self.serial.write_byte(0x08);
+                        }
+                    }
+                }
+                0x20..=0x7e => {
+                    if len < max {
+                        buf[len] = byte;
+                        len += 1;
+                        if echo {
+                            self.serial.write_byte(byte);
+                        }
+                    }
+                }
+                _ => {} // bytes no imprimibles: ignorar
+            }
+        }
+        buf[len] = 0;
+        len
     }
 
     /// Dibuja el mensaje principal en grande, centrado y también por COM1.

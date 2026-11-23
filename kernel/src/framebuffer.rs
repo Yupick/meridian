@@ -30,7 +30,7 @@ pub struct Framebuffer {
     base: *mut u32,
     width: usize,
     height: usize,
-    stride: usize,
+    pub stride: usize,
     /// Número total de píxeles del búfer, incluido el padding del stride.
     len: usize,
     format: PixelFormat,

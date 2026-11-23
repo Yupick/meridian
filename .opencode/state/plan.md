@@ -258,10 +258,16 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **T3.3 — Imagen instalable** — completed, alta, Backend. Dependencias: T3.1. Criterio: imagen instalada desde cero en QEMU.
   - **completed-at:** 2026-11-20 (PR #28 mergeado en develop, commit `6394949`; `tools/install-image.sh` crea GPT/ESP desde cero sin escribir en `/dev`, `tools/run.sh` acepta `--image`/`--blocktest`, `tests/run-install.sh` verifica GPT/ESP y arranca la imagen instalada en QEMU/OVMF con 83/83 marcadores, 6/6 NETPEER y 7/7 TLSCAP; `tests/run-signature.sh` OK)
 
-## Fase 4 — Escritorio y gráficos (pending)
+## Fase 4 — Escritorio y gráficos (completed)
 
-- **T4.1 — Compositor y ventanas** — pending, alta, Frontend. Dependencias: T3.3.
-- **T4.2 — Driver de GPU en espacio de usuario** — pending, media, Backend. Dependencias: T4.1. Criterio: un fallo del driver no tumba el kernel.
+- **completed-at:** 2026-11-23 (PR `develop -> main` fusionado; criterio de salida cumplido con escritorio usable en QEMU/OVMF: compositor con dos ventanas y foco T4.1, driver GPU userspace T4.2 con fallo aislado y kernel vivo, y terminal interactiva T4.3 con login/REPL serie reflejada en GUI; QA final `tests/run-alpha.sh` 83/83 con 6/6 NETPEER y 7/7 TLSCAP, `tests/run-desktop.sh`, `tests/run-gpu-driver.sh`, `tests/run-interactive.sh` y `tests/run-signature.sh` OK; documentación en `docs/desktop.md`, `docs/gpu-driver.md` y `docs/interactive.md`)
+
+- **T4.1 — Compositor y ventanas** — completed, alta, Frontend. Dependencias: T3.3. Criterio: escritorio con al menos dos ventanas y foco visible en QEMU/OVMF.
+  - **completed-at:** 2026-11-20 (PR #32 mergeado en develop, commit `bf78989`; `services/gui/mod.rs` + `selftest.rs` dibujan dos ventanas ("System Monitor" y "Meridian Terminal") con borde/foco, geometría relativa al framebuffer, sin heap ni dependencias nuevas; `kernel/src/console.rs` expone `framebuffer_mut()`; `framebuffer.stride` público; `tests/run-desktop.sh` verifica 6 marcadores T4.1 y captura 1920x1200 en `build/desktop/screen.png`; `tests/run-alpha.sh` 83/83, 6/6 NETPEER, 7/7 TLSCAP y `tests/run-signature.sh` OK; documentado en `docs/desktop.md` y `README.md`)
+- **T4.2 — Driver de GPU en espacio de usuario** — completed, media, Backend. Dependencias: T4.1. Criterio: un fallo del driver no tumba el kernel.
+  - **completed-at:** 2026-11-23 (PR #34 mergeado en develop, commit `397df68`; `services/gpu/mod.rs` añade fachada con `GPU_OBJECT_ID`, `GpuCommand`, validación de rectángulos y `GpuError`, y reinicia `generation` tras `InjectFault` sin `panic!`/`halt()`; `services/gpu/selftest.rs` imprime 8 marcadores T4.2 verificando comando válido, comando inválido, capacidad denegada, fallo inyectado, reinicio y kernel/framebuffer vivos; `tests/run-gpu-driver.sh` PASS con captura 1920x1200; `tests/run-alpha.sh` 83/83 con 6/6 NETPEER y 7/7 TLSCAP, `tests/run-desktop.sh`, `tests/run-signature.sh` y `tests/run-interactive.sh` OK; documentado en `docs/gpu-driver.md` y `README.md`)
+- **T4.3 — Terminal interactiva** — completed, alta, Backend + Frontend. Dependencias: T4.1. Criterio: prompt de comandos utilizable por consola serie y reflejado en la ventana de terminal del escritorio; no romper el QA 83/83 de la beta de servidor.
+  - **completed-at:** 2026-11-23 (PR #33 mergeado en develop, commit `9548508`; feature `interactive` incorpora login dev-only, REPL serie con backspace, comandos A9 y reflejo en la ventana "Meridian Terminal" del compositor; `tests/run-interactive.sh` verifica 8 marcadores T4.3, salidas reales y captura 1920x1200; `tests/run-alpha.sh` 83/83 con 6/6 NETPEER y 7/7 TLSCAP, `tests/run-desktop.sh` y `tests/run-signature.sh` OK; documentado en `docs/interactive.md` y `README.md`)
 
 ## Fase 5 — ARM64 (pending)
 
