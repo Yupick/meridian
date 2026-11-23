@@ -38,11 +38,19 @@ tests/run-alpha.sh
 QEMU/OVMF y verifica 83/83 marcadores (76 en COM1 + 7 TLSCAP) con 6/6
 `NETPEER`. Guía de instalación y uso: [`docs/beta.md`](docs/beta.md).
 
-## Terminal interactiva T4.3
+## Fase 4 — Escritorio y gráficos
 
-Ejecuta la terminal interactiva con `tools/run-interactive.sh` (ver
-`docs/interactive.md`). La secuencia por defecto prueba login, comandos de shell
-y la terminal GUI en QEMU/OVMF.
+T4.1 añade un compositor con dos ventanas y foco visible verificado por
+`tests/run-desktop.sh` (ver [`docs/desktop.md`](docs/desktop.md)).
+
+T4.2 añade una fachada de driver de GPU en espacio de usuario: valida comandos,
+exige capacidades, reinicia el driver tras un fallo inyectado y mantiene el
+kernel y el framebuffer vivos. Ver `tests/run-gpu-driver.sh` y
+[`docs/gpu-driver.md`](docs/gpu-driver.md).
+
+T4.3 añade la terminal interactiva: ejecuta `tools/run-interactive.sh` para
+probar login dev-only, comandos de shell y la terminal GUI en QEMU/OVMF (ver
+[`docs/interactive.md`](docs/interactive.md)).
 
 ## Principios
 
@@ -79,6 +87,9 @@ docs/         Especificaciones internas
   de la Alpha, con la pila de red, permisos, acceso remoto y QA detallada.
 - [`docs/boot.md`](docs/boot.md) — arranque UEFI, handoff `BootInfo` y
   verificación de firma del kernel (T1.1).
+- [`docs/desktop.md`](docs/desktop.md) — compositor T4.1, ventanas y foco.
+- [`docs/gpu-driver.md`](docs/gpu-driver.md) — driver GPU userspace T4.2,
+  capacidades, comandos y aislamiento de fallos.
 - [`docs/interactive.md`](docs/interactive.md) — terminal interactiva T4.3:
   uso, credenciales dev-only y comandos soportados.
 
@@ -99,15 +110,16 @@ de red/TLS), además de Rust con los targets `x86_64-unknown-uefi` y
 `x86_64-unknown-none`. Verifica el entorno con `tools/check-env.sh`.
 
 
-## T4.1 — Compositor y ventanas
+## QA de Fase 4
 
+```bash
+tests/run-alpha.sh          # 83/83 marcadores de la beta + 6/6 NETPEER + 7/7 TLSCAP
+tests/run-desktop.sh        # T4.1: compositor, 2 ventanas y foco
+tests/run-gpu-driver.sh     # T4.2: fallo de driver aislado y kernel vivo
+tests/run-interactive.sh    # T4.3: terminal serie + reflejo GUI
+tests/run-signature.sh      # rechazo de firma Ed25519 inválida
+```
 
-
-Meridian se encuentra en la fase T4.1 (Compositor y ventanas). Esta fase introduce
-
-un compositor minimalista de escritorio con 2 ventanas, zona de enfoque y primitivas
-
-de framebuffer. El avance se verifica con `tests/run-desktop.sh`.
 ## Licencia
 
 Meridian se distribuye bajo **GNU AGPL v3.0 o posterior**. Ver `LICENSE` y `NOTICE`.
