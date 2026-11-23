@@ -38,6 +38,12 @@ tests/run-alpha.sh
 QEMU/OVMF y verifica 83/83 marcadores (76 en COM1 + 7 TLSCAP) con 6/6
 `NETPEER`. Guía de instalación y uso: [`docs/beta.md`](docs/beta.md).
 
+## Terminal interactiva T4.3
+
+Ejecuta la terminal interactiva con `tools/run-interactive.sh` (ver
+`docs/interactive.md`). La secuencia por defecto prueba login, comandos de shell
+y la terminal GUI en QEMU/OVMF.
+
 ## Principios
 
 - **Microkernel:** el núcleo solo gestiona memoria, planificación, IPC y capacidades.
@@ -73,6 +79,8 @@ docs/         Especificaciones internas
   de la Alpha, con la pila de red, permisos, acceso remoto y QA detallada.
 - [`docs/boot.md`](docs/boot.md) — arranque UEFI, handoff `BootInfo` y
   verificación de firma del kernel (T1.1).
+- [`docs/interactive.md`](docs/interactive.md) — terminal interactiva T4.3:
+  uso, credenciales dev-only y comandos soportados.
 
 ## Requisitos de desarrollo (Ubuntu 24.04)
 
