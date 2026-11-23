@@ -55,6 +55,8 @@ mod auth;
 mod term;
 // Compositor y ventanas (T4.1).
 #[path = "../../services/gui/mod.rs"] mod gui;
+// Driver de GPU en espacio de usuario (T4.2).
+#[path = "../../services/gpu/mod.rs"] mod gpu;
 // Usuarios con permisos sobre objetos del volumen cifrado (T2.2).
 #[path = "../../services/perm/mod.rs"]
 pub mod perm;
@@ -255,6 +257,11 @@ extern "sysv64" fn kernel_main() -> ! {
     if !gui::selftest::run(&mut console) {
         t41_fatal(&mut console);
     }
+
+    // --- T4.2: driver de GPU en espacio de usuario ---
+    // Un fallo del driver se informa y se reinicia, pero NO detiene el kernel.
+    console.println("");
+    let _ = gpu::selftest::run(&mut console);
 
     // --- T4.3: terminal interactiva (solo con la feature `interactive`) -----
     #[cfg(feature = "interactive")]
