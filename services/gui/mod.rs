@@ -29,20 +29,20 @@ const TITLE_BAR_H: usize = 22;
 
 /// Una ventana del compositor.
 #[derive(Clone)]
-pub struct Window {
-    /// Título fijo de la ventana.
-    title: &'static str,
+pub struct Window<'a> {
+    /// Título de la ventana.
+    title: &'a str,
     /// Rectángulo de la ventana (x, y, ancho, alto) relativo a la pantalla.
     rect: (usize, usize, usize, usize),
     /// Si la ventana tiene el foco actual.
     focused: bool,
     /// Líneas de contenido de la ventana.
-    lines: [&'static str; 6],
+    lines: [&'a str; 6],
 }
 
-impl Window {
+impl<'a> Window<'a> {
     /// Crea una nueva ventana con título, rectángulo y contenido.
-    const fn new(title: &'static str, rect: (usize, usize, usize, usize), lines: [&'static str; 6]) -> Self {
+    const fn new(title: &'a str, rect: (usize, usize, usize, usize), lines: [&'a str; 6]) -> Self {
         Self {
             title,
             rect,
@@ -124,23 +124,27 @@ impl Window {
 ///
 /// Ventana 0 siempre está detrás (Z-order inferior) y la ventana 1 delante.
 /// El foco puede alternarse entre ellas con `focus_next()`.
-pub struct Compositor {
-    windows: [Window; 2],
+pub struct Compositor<'a> {
+    windows: [Window<'a>; 2],
     /// Índice de la ventana con foco actual (0 o 1).
     focused_index: usize,
 }
 
-impl Compositor {
+impl<'a> Compositor<'a> {
+    /// Ventana 0 ("System Monitor"): información estática, sin foco.
+    fn monitor_window(screen_w: usize, screen_h: usize) -> Window<'a> {
+        let rect = (0, screen_h / 4, screen_w / 2, screen_h / 2);
+        let lines = ["resolución", "stride/formato", "COM1 115200", "Meridian Desktop T4.1", "", ""];
+        Window::new("System Monitor", rect, lines)
+    }
+
     /// Crea el compositor con las 2 ventanas del escritorio T4.1.
     ///
     /// Ventana 0: "System Monitor", información estática.
     /// Ventana 1: "Meridian Terminal", barra de título y demo/prompt.
     /// Los rectángulos son proporcionales al tamaño de la pantalla.
     pub fn new(screen_w: usize, screen_h: usize) -> Self {
-        // Ventana 0: System Monitor - ocupa la mitad izquierda.
-        let win0_rect = (0, screen_h / 4, screen_w / 2, screen_h / 2);
-        let win0_lines = ["resolución", "stride/formato", "COM1 115200", "Meridian Desktop T4.1", "", ""];
-        let win0 = Window::new("System Monitor", win0_rect, win0_lines);
+        let win0 = Self::monitor_window(screen_w, screen_h);
 
         // Ventana 1: Meridian Terminal - ocupa la mitad derecha.
         let win1_rect = (screen_w / 2, screen_h / 4, screen_w / 2, screen_h / 2);
@@ -150,6 +154,24 @@ impl Compositor {
         Self {
             windows: [win0, win1],
             focused_index: 0,
+        }
+    }
+
+    /// Crea el compositor para la terminal interactiva (T4.3).
+    ///
+    /// Usa las 6 líneas indicadas en la ventana "Meridian Terminal" y la deja
+    /// enfocada; "System Monitor" conserva la información estática de T4.1.
+    pub fn new_terminal(screen_w: usize, screen_h: usize, lines: [&'a str; 6]) -> Self {
+        let mut win0 = Self::monitor_window(screen_w, screen_h);
+        win0.set_focused(false);
+
+        let win1_rect = (screen_w / 2, screen_h / 4, screen_w / 2, screen_h / 2);
+        let mut win1 = Window::new("Meridian Terminal", win1_rect, lines);
+        win1.set_focused(true);
+
+        Self {
+            windows: [win0, win1],
+            focused_index: 1,
         }
     }
 
@@ -198,5 +220,20 @@ pub fn present(console: &mut Console) {
     // El préstamo mutable de `fb` se mantiene durante esta función;
     // al retornar, el préstamo se libera automáticamente.
     let mut compositor = Compositor::new(fb.width(), fb.height());
+    compositor.present(fb);
+}
+
+/// Presentación del escritorio con la terminal interactiva (T4.3).
+///
+/// Dibuja el mismo escritorio de T4.1, pero la ventana "Meridian Terminal"
+/// muestra las 6 líneas indicadas y aparece enfocada. Sin heap.
+pub fn present_terminal<'a>(console: &mut Console, lines: &[&'a str; 6]) {
+    if !console.framebuffer_active() {
+        return;
+    }
+
+    let Some(fb) = console.framebuffer_mut() else { return };
+
+    let mut compositor = Compositor::new_terminal(fb.width(), fb.height(), *lines);
     compositor.present(fb);
 }

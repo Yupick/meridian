@@ -18,6 +18,27 @@
 
 set -euo pipefail
 
+log()  { printf '[build] %s\n' "$*"; }
+fail() { printf '[build] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Parser de opciones: --interactive activa la feature interactive del kernel.
+INTERACTIVE=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --interactive)
+            INTERACTIVE=1
+            shift
+            ;;
+        -h|--help)
+            sed -n '2,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            fail "opción desconocida: $1"
+            ;;
+    esac
+done
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${MERIDIAN_BUILD_DIR:-$ROOT/build}"
 PROFILE="${CARGO_PROFILE:-release}"
@@ -38,9 +59,6 @@ PART_SIZE_MB=64
 PART_START_SECTOR=2048
 PART_SIZE_SECTORS=$((PART_SIZE_MB * 1024 * 1024 / 512))
 PART_END_SECTOR=$((PART_START_SECTOR + PART_SIZE_SECTORS - 1))
-
-log()  { printf '[build] %s\n' "$*"; }
-fail() { printf '[build] ERROR: %s\n' "$*" >&2; exit 1; }
 
 require() {
     command -v "$1" >/dev/null 2>&1 || fail "falta '$1' en PATH (ver tools/check-env.sh y README)"
@@ -67,9 +85,14 @@ cargo build \
     -p meridian-bootloader
 
 log "compilando kernel ($KERNEL_TARGET, perfil $PROFILE)"
+KERNEL_CARGO_FLAGS=("${CARGO_FLAGS[@]}")
+if (( INTERACTIVE )); then
+    KERNEL_CARGO_FLAGS+=(--features interactive)
+    log "activando feature interactive para kernel interactivo T4.3"
+fi
 cargo build \
     --manifest-path "$ROOT/Cargo.toml" \
-    "${CARGO_FLAGS[@]}" \
+    "${KERNEL_CARGO_FLAGS[@]}" \
     --target "$KERNEL_TARGET" \
     -p meridian-kernel
 

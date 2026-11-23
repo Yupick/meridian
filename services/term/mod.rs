@@ -43,7 +43,7 @@ impl Shell {
         core::str::from_utf8(&self.path[..self.path_len]).unwrap_or("/")
     }
 
-    fn prompt(&self, console: &mut Console) {
+    pub fn prompt(&self, console: &mut Console) {
         console.set_foreground(crate::console::ACCENT);
         let _ = write!(console, "meridian:{}$ ", self.path_str());
         console.set_foreground(crate::console::TEXT);

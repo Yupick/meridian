@@ -8,6 +8,10 @@
 *.fd
 *.vars.fd
 
+# Python
+__pycache__/
+*.pyc
+
 # Editores y sistema
 .vscode/
 .idea/

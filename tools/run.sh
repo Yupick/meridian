@@ -226,7 +226,7 @@ if (( !EXPECT_SIGNATURE_REJECT )); then
         >"$NETPEER_STDOUT" 2>"$NETPEER_STDERR" &
     NETPEER_PID=$!
     log "net-peer PID $NETPEER_PID (log: $NETPEER_LOG, tls: $TLSCAP_LOG)"
-    sleep 0.2
+    sleep 1
 fi
 
 qemu-system-x86_64 \
