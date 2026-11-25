@@ -269,9 +269,9 @@ Dependencias: ninguna para A1. Después, en orden de la lista.
 - **T4.3 — Terminal interactiva** — completed, alta, Backend + Frontend. Dependencias: T4.1. Criterio: prompt de comandos utilizable por consola serie y reflejado en la ventana de terminal del escritorio; no romper el QA 83/83 de la beta de servidor.
   - **completed-at:** 2026-11-23 (PR #33 mergeado en develop, commit `9548508`; feature `interactive` incorpora login dev-only, REPL serie con backspace, comandos A9 y reflejo en la ventana "Meridian Terminal" del compositor; `tests/run-interactive.sh` verifica 8 marcadores T4.3, salidas reales y captura 1920x1200; `tests/run-alpha.sh` 83/83 con 6/6 NETPEER y 7/7 TLSCAP, `tests/run-desktop.sh` y `tests/run-signature.sh` OK; documentado en `docs/interactive.md` y `README.md`)
 
-## Fase 5 — ARM64 (pending)
+## Fase 5 — ARM64 (in_progress)
 
-- **T5.1 — HAL para aarch64** — pending, alta, Backend. Dependencias: T4.1. Criterio: arranque en QEMU aarch64.
+- **T5.1 — HAL para aarch64** — in_progress, alta, Backend. Dependencias: T4.1. Criterio: arranque en QEMU aarch64.
 
 ## Fase 6 — Compiladores y runtimes (pending)
 
