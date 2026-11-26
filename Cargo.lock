@@ -61,6 +61,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "meridian-kernel-aarch64"
+version = "0.1.0"
+dependencies = [
+ "font8x8",
+ "meridian-bootinfo",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"

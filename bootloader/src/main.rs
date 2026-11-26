@@ -34,9 +34,15 @@ use uefi::mem::memory_map::MemoryMap;
 use uefi::prelude::*;
 use uefi::proto::console::gop::{GraphicsOutput, Mode, PixelFormat as GopPixelFormat};
 
-/// Puerto del dispositivo `debugcon` de QEMU. Permite emitir trazas después de
-/// dibujar en GOP sin que el logger de UEFI vuelva a escribir en pantalla.
+/// Puerto del dispositivo `debugcon` de QEMU en x86-64. Permite emitir trazas
+/// después de dibujar en GOP sin que el logger de UEFI vuelva a escribir en pantalla.
+#[cfg(target_arch = "x86_64")]
 const QEMU_DEBUGCON_PORT: u16 = 0xE9;
+
+/// UART PL011 de QEMU `virt` en aarch64, usado como sumidero de trazas después
+/// de `ExitBootServices()`.
+#[cfg(target_arch = "aarch64")]
+const PL011_BASE: usize = 0x0900_0000;
 
 #[entry]
 fn main() -> Status {
@@ -70,10 +76,15 @@ fn run() -> uefi::Result<()> {
     let gop_handle = gop_handles.remove(0);
     drop(gop_handles);
     log::info!("GOP localizado ({} handle(s) disponibles)", 1);
+    log::info!("buscando kernel.elf en la ESP");
 
     // --- Sistema de archivos de la ESP/FAT, kernel y firma ----------------
     let (kernel_data, signature_data) = {
-        let fs_proto = boot::get_image_file_system(boot::image_handle())?;
+        log::info!("localizando sistema de archivos de la imagen");
+        let fs_proto = boot::get_image_file_system(boot::image_handle()).map_err(|err| {
+            log::error!("get_image_file_system falló: {err:?}");
+            err
+        })?;
         let mut fs = FileSystem::new(fs_proto);
 
         let kernel_data = {
@@ -205,6 +216,19 @@ fn run() -> uefi::Result<()> {
 
     // El buffer del mapa vive en memoria LOADER_DATA reservada por
     // exit_boot_services(); hay que conservarlo durante toda la vida del kernel.
+    // AAVMF deja la RAM mapeada 1:1 en EL1; solo hay que limpiar XN en las
+    // entradas que cubren el kernel antes de saltar.
+    #[cfg(target_arch = "aarch64")]
+    {
+        let ttbr0: u64;
+        // SAFETY: leer TTBR0_EL1 es seguro en EL1 y no altera el estado.
+        unsafe {
+            core::arch::asm!("mrs {0}, ttbr0_el1", out(reg) ttbr0);
+            make_kernel_executable(ttbr0, kernel.entry, kernel.size);
+        }
+    }
+    let entry_address = kernel.entry;
+
     core::mem::forget(memory_map);
 
     debugcon("meridian: ExitBootServices completado, saltando al kernel\r\n");
@@ -212,12 +236,28 @@ fn run() -> uefi::Result<()> {
     // SAFETY: el ELF fue validado y cargado en kernel.entry. La pila del
     // firmware sigue siendo válida en este punto.
     //
-    // El target `x86_64-unknown-uefi` usa la ABI Windows x64 para `extern "C"`
-    // (primer argumento en RCX), mientras que el kernel `x86_64-unknown-none`
-    // usa SysV (primer argumento en RDI). Por eso la llamada se declara
-    // explícitamente como `extern "sysv64"`.
+    // En x86-64 el bootloader UEFI usa la ABI Windows x64 para `extern "C"`
+    // (primer argumento en RCX) y el kernel usa SysV (RDI), por eso se declara
+    // `extern "sysv64"`. En aarch64 ambos usan AAPCS64 (x0), así que basta
+    // `extern "C"`.
+    #[cfg(target_arch = "x86_64")]
     let entry: extern "sysv64" fn(*const BootInfo) -> ! =
-        unsafe { core::mem::transmute(kernel.entry as usize) };
+        unsafe { core::mem::transmute(entry_address as usize) };
+    #[cfg(target_arch = "aarch64")]
+    let entry: extern "C" fn(*const BootInfo) -> ! =
+        unsafe { core::mem::transmute(entry_address as usize) };
+    // AArch64: el kernel se copió con servicios UEFI; hay que hacer visible
+    // el nuevo código en el caché de instrucciones antes de saltar.
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!(
+            "dsb sy",
+            "ic iallu",
+            "dsb sy",
+            "isb",
+            options(nostack, preserves_flags)
+        );
+    }
     entry(boot_info_ptr);
 
     #[allow(unreachable_code)]
@@ -358,6 +398,7 @@ fn draw_boot_screen(
 ///
 /// No toca GOP ni depende de boot services, por lo que es seguro tras
 /// `ExitBootServices()`.
+#[cfg(target_arch = "x86_64")]
 fn debugcon(message: &str) {
     for byte in message.bytes() {
         // SAFETY: el puerto 0xE9 es un sumidero de depuración fijo de QEMU; la
@@ -369,6 +410,85 @@ fn debugcon(message: &str) {
                 in("al") byte,
                 options(nomem, nostack, preserves_flags)
             );
+        }
+    }
+}
+
+/// AAVMF mapa la RAM como RW+NX. Esta función limpia el bit XN de la entrada
+/// de nivel 2 que cubre el kernel, para que el salto desde UEFI sea ejecutable
+/// sin abandonar el mapa de páginas del firmware.
+#[cfg(target_arch = "aarch64")]
+unsafe fn make_kernel_executable(ttbr0: u64, va_start: u64, size: u64) {
+    const TABLE_MASK: u64 = 0x0000_ffff_ffff_f000;
+    const XN: u64 = (1 << 54) | (1 << 55);
+    const PAGE_SIZE: u64 = 4096;
+
+    let mut page = va_start & !(PAGE_SIZE - 1);
+    let end = va_start.saturating_add(size);
+    while page < end {
+        let mut table = ttbr0 & TABLE_MASK;
+        for level in 0..4u32 {
+            let shift = 39 - 9 * level;
+            let index = ((page >> shift) & 0x1ff) as usize;
+            let entry = (table as *mut u64).add(index);
+            let descriptor = entry.read_volatile();
+
+            if level == 3 {
+                if descriptor & 0b11 == 0b11 {
+                    entry.write_volatile(descriptor & !XN);
+                    core::arch::asm!(
+                        "dc civac, {addr}",
+                        "dsb sy",
+                        addr = in(reg) entry as usize,
+                        options(nostack, preserves_flags)
+                    );
+                }
+                break;
+            }
+
+            match descriptor & 0b11 {
+                0b11 => table = descriptor & TABLE_MASK,
+                0b01 => {
+                    // Bloque de 1 GiB (nivel 1) o 2 MiB (nivel 2).
+                    entry.write_volatile(descriptor & !XN);
+                    core::arch::asm!(
+                        "dc civac, {addr}",
+                        "dsb sy",
+                        addr = in(reg) entry as usize,
+                        options(nostack, preserves_flags)
+                    );
+                    break;
+                }
+                _ => break,
+            }
+        }
+        page = page.saturating_add(PAGE_SIZE);
+    }
+
+    core::arch::asm!(
+        "tlbi vmalle1",
+        "dsb sy",
+        "isb",
+        options(nostack, preserves_flags)
+    );
+}
+
+/// Escribe trazas en el UART PL011 de QEMU `virt` tras `ExitBootServices()`.
+#[cfg(target_arch = "aarch64")]
+fn debugcon(message: &str) {
+    for byte in message.bytes() {
+        // SAFETY: PL011_BASE es el UART fijo de la máquina `virt` de QEMU; la
+        // escritura de un byte al registro DR no altera memoria ni pila.
+        unsafe {
+            let fr = (PL011_BASE + 0x18) as *const u32;
+            let dr = (PL011_BASE + 0x00) as *mut u32;
+            for _ in 0..100_000 {
+                if core::ptr::read_volatile(fr) & (1 << 5) != 0 {
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+            core::ptr::write_volatile(dr, byte as u32);
         }
     }
 }
