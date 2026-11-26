@@ -22,9 +22,13 @@ pub const BOOTINFO_VERSION: u32 = 1;
 
 /// Dirección física base donde el bootloader carga el kernel.
 ///
-/// Debe coincidir con `kernel/linker.ld`. Se eligió 32 MiB porque OVMF reserva
-/// parte de la memoria baja y deja un hueco no convencional alrededor de 16 MiB.
+/// Debe coincidir con el linker script del kernel de cada arquitectura. En
+/// x86-64 se eligió 32 MiB porque OVMF reserva memoria baja; en aarch64 la
+/// RAM de QEMU `virt` empieza en 0x4000_0000, así que se usa 32 MiB más tarde.
+#[cfg(target_arch = "x86_64")]
 pub const KERNEL_LOAD_BASE: u64 = 0x0200_0000;
+#[cfg(target_arch = "aarch64")]
+pub const KERNEL_LOAD_BASE: u64 = 0x4010_0000;
 
 /// Formatos de píxel de GOP, codificados de forma estable para el kernel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

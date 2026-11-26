@@ -1,9 +1,9 @@
 //! Cargador ELF64 mínimo para la imagen del kernel.
 //!
-//! Solo admite ELF64 little-endian de x86-64 con segmentos `PT_LOAD`. La imagen
-//! se enlaza en `KERNEL_LOAD_BASE` (ver `kernel/linker.ld`), por lo que el
-//! bootloader reserva ese rango físico exacto con `AllocatePages` y copia cada
-//! segmento a su dirección de carga.
+//! Admite ELF64 little-endian de x86-64 o aarch64 con segmentos `PT_LOAD`. La
+//! imagen se enlaza en `KERNEL_LOAD_BASE` (ver `kernel*/linker.ld`), por lo que
+//! el bootloader reserva ese rango físico exacto con `AllocatePages` y copia
+//! cada segmento a su dirección de carga.
 
 use core::fmt;
 
@@ -14,8 +14,16 @@ use uefi::Status;
 const ELF_HEADER_SIZE: usize = 64;
 const PROGRAM_HEADER_SIZE: usize = 56;
 const PT_LOAD: u32 = 1;
+#[cfg(target_arch = "x86_64")]
 const EM_X86_64: u16 = 62;
+#[cfg(target_arch = "aarch64")]
+const EM_AARCH64: u16 = 183;
 const ET_EXEC: u16 = 2;
+
+#[cfg(target_arch = "x86_64")]
+const EXPECTED_MACHINE: u16 = EM_X86_64;
+#[cfg(target_arch = "aarch64")]
+const EXPECTED_MACHINE: u16 = EM_AARCH64;
 const PAGE_SIZE: u64 = 4096;
 
 /// Imagen del kernel ya cargada en memoria física.
@@ -35,7 +43,7 @@ pub enum ElfError {
     TooSmall,
     BadMagic,
     NotElf64,
-    NotX86_64,
+    UnexpectedArchitecture(u16),
     NotExecutable,
     BadHeader,
     BadProgramHeader(usize),
@@ -52,7 +60,9 @@ impl fmt::Display for ElfError {
             Self::TooSmall => write!(f, "la imagen es más pequeña que una cabecera ELF64"),
             Self::BadMagic => write!(f, "firma ELF inválida"),
             Self::NotElf64 => write!(f, "no es un ELF de 64 bits little-endian"),
-            Self::NotX86_64 => write!(f, "el ELF no es para x86-64"),
+            Self::UnexpectedArchitecture(machine) => {
+                write!(f, "el ELF no es para la arquitectura esperada (e_machine={machine})")
+            }
             Self::NotExecutable => write!(f, "el ELF no es de tipo ET_EXEC"),
             Self::BadHeader => write!(f, "cabecera ELF64 truncada"),
             Self::BadProgramHeader(i) => write!(f, "program header {i} inválido"),
@@ -102,8 +112,8 @@ pub fn load(data: &[u8]) -> Result<LoadedKernel, ElfError> {
 
     let e_type = u16_at(data, 16).ok_or(ElfError::BadHeader)?;
     let e_machine = u16_at(data, 18).ok_or(ElfError::BadHeader)?;
-    if e_machine != EM_X86_64 {
-        return Err(ElfError::NotX86_64);
+    if e_machine != EXPECTED_MACHINE {
+        return Err(ElfError::UnexpectedArchitecture(e_machine));
     }
     if e_type != ET_EXEC {
         return Err(ElfError::NotExecutable);
