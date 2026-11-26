@@ -1,0 +1,12 @@
+[package]
+name = "meridian-kernel-aarch64"
+description = "HAL mínimo de Meridian para aarch64 (T5.1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+meridian-bootinfo = { path = "../bootinfo" }
+font8x8 = { version = "0.3", default-features = false }
